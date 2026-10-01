@@ -7,3 +7,5 @@ testdata/big.log
 build/
 .gradle/
 out/
+.intellijPlatform/
+.kotlin/
