@@ -1,0 +1,29 @@
+2026-10-01 09:14:02.101 DEBUG [http-nio-8080-exec-4] org.hibernate.SQL - 
+    select
+        u1_0.id,
+        u1_0.email,
+        u1_0.name,
+        o2_0.user_id,
+        o2_0.id,
+        o2_0.total
+    from
+        users u1_0 
+    left join
+        orders o2_0 on u1_0.id=o2_0.user_id 
+    where
+        u1_0.email=?
+2026-10-01 09:14:02.104 TRACE [http-nio-8080-exec-4] org.hibernate.orm.jdbc.bind - binding parameter [1] as [VARCHAR] - [user@example.com]
+2026-10-01 09:14:02.319 ERROR [http-nio-8080-exec-4] c.e.s.UserService - Failed to load user 4711
+java.lang.NullPointerException: Cannot invoke "User.getEmail()" because "user" is null
+	at com.example.service.UserService.sendWelcomeEmail(UserService.java:128)
+	at com.example.web.UserController.create(UserController.java:64)
+2026-10-01 09:14:02.320  WARN [scheduling-1] c.e.s.CleanupJob - 3 stale sessions removed
+2026-10-01 09:14:03.010 DEBUG [http-nio-8080-exec-7] org.hibernate.SQL - 
+    insert
+    into
+        orders (user_id, total, id)
+    values
+        (?, ?, ?)
+2026-10-01 09:14:03.011 TRACE [http-nio-8080-exec-7] org.hibernate.orm.jdbc.bind - binding parameter [1] as [BIGINT] - [4711]
+2026-10-01 09:14:03.012 TRACE [http-nio-8080-exec-7] org.hibernate.orm.jdbc.bind - binding parameter [2] as [NUMERIC] - [129.99]
+2026-10-01 09:14:03.013 TRACE [http-nio-8080-exec-7] org.hibernate.orm.jdbc.bind - binding parameter [3] as [BIGINT] - [90815]
