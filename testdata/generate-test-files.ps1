@@ -1,7 +1,7 @@
 # Regenerates the Day-0 adversarial test files from the charter (§7.2).
-# big.log is intentionally NOT committed (400 MB) — run this script to recreate it.
+# big.log is intentionally NOT committed (400 MB) — run this script to recreate an equivalent ~400 MB file.
 param(
-    [int]$BigLogLines = 400000   # ~400 MB with the pattern below
+    [int]$BigLogLines = 4200000   # ~400 MB with the pattern below
 )
 $ErrorActionPreference = 'Stop'
 $nl = [string][char]13 + [string][char]10

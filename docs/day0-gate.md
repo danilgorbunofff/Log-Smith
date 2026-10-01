@@ -2,11 +2,11 @@
 
 **Charter reference:** README §7 (§7.6 — write the result here, one line per axis per plugin plus a verdict, commit it).
 **Run date:** 2026-10-01 (the same day as the charter's evidence snapshot).
-**How this run was performed:** every programmatically verifiable part of §7 was executed live against the JetBrains Marketplace API and official JetBrains sources. The GUI scoring pass (§7.3) — the part that needs a human with an IDE open — was **not** executed. Its preparation (§7.2 files) is complete, its flip-conditions are pre-registered below, and it is the single remaining 60-minute item.
+**How this run was performed:** every programmatically verifiable part of §7 was executed live against the JetBrains Marketplace API and official JetBrains sources, and the GUI scoring pass (§7.3) was **executed the same day** — the owner ran LogLens free tier in WebStorm 2025.3.2 against the three §7.2 files with zero configuration (full record in §8 below; raw answers in `docs/gui-pass-scorecard.md`).
 
 ---
 
-## Verdict: **GO-NARROWED** — targeting axis A (visible detection reporting) + axis B (editability preservation)
+## Verdict: **GO-NARROWED — CONFIRMED by the §7.3 GUI pass** — targeting axis A (visible detection reporting) + axis B (editability preservation)
 
 The wedge has narrowed exactly the way the charter's §7.5 predicted it might ("narrows the wedge but does not close it"): no kill criterion is fully triggered, criterion (c) fires as a space-wide warning, and the §7.5 Ideolog check removes most of the incumbent's defect surface. What remains unclaimed, per published evidence from all 13 live competitors, is the §5.1 wedge: **a viewer that reports what it detected instead of silently doing nothing**, and preservation of the user's file. If the GUI pass below contradicts this — commit a NO-GO the same day. A documented no-go is a good outcome.
 
@@ -71,7 +71,7 @@ Nobody claims Axis A. Two verified vendors explicitly claim Axis B. Five claim A
 
 Build **R1, R2, R4, R6, R8** and nothing else: visible detection status with match ratio, `Help → Copy detection diagnostics`, zero file mutation, no highlighter on detection failure, live re-apply. Multi-GB streaming (axis C) is necessary plumbing, not the wedge — five verified vendors claim it. No Pro tier, no dashboards, no AI. Economics reminder (§9, read before committing to the two weeks): realistic outcome $0–1,500 in year one; criterion (c) fired; the bottleneck is distribution (§10.9), and `.log`'s 16,379 is the ceiling.
 
-## 7. The one remaining human step (60 min, §7.3) — pre-registered flip conditions
+## 7. The §7.3 GUI pass — pre-registered flip conditions (executed: see §8)
 
 Install `LogLens` (33263), `LogParser Pro` (29050), `.log` (25828), `Awesome Log Viewer` (27750) — add `PRISM` (32995) and `TailScope` (34380); open the three files with zero configuration; score axes A–F.
 
@@ -79,4 +79,20 @@ Install `LogLens` (33263), `LogParser Pro` (29050), `.log` (25828), `Awesome Log
 - **Confirm the narrow target if:** a competitor shows a *visible* failure on axis A (silence), B (read-only), C (freeze), or F (ANSI garbage) — §5 tells you which defect to attack, and the build plan starts at Days 1–2 unchanged.
 - **Also record:** if new-entrant reviews appear with zero reliability complaints → thesis dead, per (b).
 
-*Record committed on 2026-10-01. Charter moved to `docs/charter.md` only on the day `src/main/kotlin` exists (§11.3).*
+## 8. §7.3 GUI scoring pass — EXECUTED 2026-10-01 (LogLens death test)
+
+Environment: WebStorm 2025.3.2 (the owner's IDE), LogLens free tier, zero configuration, the three §7.2 files. Raw answers: `docs/gui-pass-scorecard.md`.
+
+| Axis | Observed (LogLens, free tier) | Meaning |
+|---|---|---|
+| Detection correctness | Detected the Logback pattern zero-config; merged the multi-line `format_sql` SQL block and the stack trace into single events; colored levels correctly | The incumbent parses well — parsing is table stakes, not the wedge |
+| **A. Visible detection report** | **Silent.** Status bar reads `29 lines · LogLens` — a line count and the tier name. No format name, no match ratio, no failure notice anywhere | **Wedge intact — exactly as predicted** from the 1.1.0 changelog |
+| **B. Editability preserved** | Plugin offers a `Text` tab next to `Log`; typing test pending owner confirmation (screenshot not delivered) | Pending one 30-second check |
+| **C. Multi-GB** | 400 MB / 3,225,600 lines: fast load, easy scroll, no freeze (owner: "all scrolls easily and fast loaded"); big-file `Text` fallback is the platform's built-in Large File Editor | **Conceded — the free tier handles 400 MB. Do not compete on performance** |
+| **F. ANSI** | **Fails visibly.** Blue banner: *"Plugins supporting ANSI codes found. — Install plugins / Ignore extension"*. Truecolor line not rendered; raw `ESC[…m` visible in the `Text` tab. Only LogLens's own level-word coloring appears | **Wedge bonus** — validates R9's slot in the build plan |
+
+**Death-test result (§7.4a): NOT TRIGGERED — LogLens is not perfect.** And it did not fail quietly: on axis F it exhibits the exact honesty pattern §5.1 complains about missing elsewhere — it *detects* something (ANSI) and then *reports its own inability*, redirecting the user to install a different plugin. The space's dominant free product is silent about format detection and cannot render ANSI.
+
+**Verdict after §7.3: GO-NARROWED CONFIRMED.** Build R1, R2, R4, R6, R8 (≈3.5 days, §8.2). R9 (ANSI rendering) now carries direct GUI-pass evidence that the free incumbent punts on it — it stays in the plan, after the narrow set. Remaining open item: axis-B typing test (owner).
+
+*Record committed on 2026-10-01 (§7.3 executed the same day). Charter moves to `docs/charter.md` the day `src/main/kotlin` exists (§11.3).*
