@@ -1,51 +1,31 @@
 package com.danilgorbunofff.logsmith
 
-import com.danilgorbunofff.logsmith.sniff.FormatStats
+import com.intellij.icons.AllIcons
 import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JLabel
-import javax.swing.JPanel
 
 /**
- * The Day-1 deliverable itself: a status line under the editor.
- *
- * Charter §5.1: the failure state is visible from day one — `Format: <unknown>`
- * with the tooltip telling the user detection is on its way.
+ * The status line under the editor, attached with `FileEditorManager.addBottomComponent`.
+ * It renders [StatusText] and nothing else, so the text always reflects current state.
  */
 class LogSmithStatusStrip {
 
-    private val label = JLabel(FormatStats.UNKNOWN)
-    private var lastText: String = FormatStats.UNKNOWN
-    private var lastTooltip: String = "detection runs in the background after the file is opened."
+    private val label = JLabel()
 
-    val root: JComponent = JPanel(BorderLayout()).apply {
-        add(JBUI.Panels.simplePanel(label).apply { border = JBUI.Borders.empty(2, 10) })
-        putClientProperty("strip", this)
+    val root: JComponent = JBUI.Panels.simplePanel(label).apply {
+        border = JBUI.Borders.empty(2, 10)
     }
 
     init {
-        label.text = lastText
-        label.toolTipText = lastTooltip
+        render(StatusText.of(null, disabled = false, colouringNote = null))
     }
 
-    fun show(stats: FormatStats?) {
-        if (stats != null) {
-            lastText = stats.toString()
-            lastTooltip = "matched ${stats.matched} of ${stats.scanned} lines scanned" +
-                (stats.note?.let { " — $it" } ?: "")
-            label.text = lastText
-            label.toolTipText = lastTooltip
-        }
-    }
+    val text: String get() = label.text
 
-    fun showDisabled() {
-        label.text = "LogSmith highlighting disabled for this file"
-        label.toolTipText = "Use the editor context menu to re-enable LogSmith for this file."
-    }
-
-    fun showEnabled() {
-        label.text = lastText
-        label.toolTipText = lastTooltip
+    fun render(status: StatusText) {
+        label.text = status.text
+        label.toolTipText = status.tooltip
+        label.icon = if (status.warning) AllIcons.General.Warning else null
     }
 }

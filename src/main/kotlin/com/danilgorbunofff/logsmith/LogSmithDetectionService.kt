@@ -1,132 +1,133 @@
 package com.danilgorbunofff.logsmith
 
-import com.danilgorbunofff.logsmith.sniff.BuiltinSniffers
-import com.danilgorbunofff.logsmith.sniff.FormatScorer
-import com.danilgorbunofff.logsmith.sniff.FormatStats
+import com.danilgorbunofff.logsmith.sniff.DetectionResult
+import com.danilgorbunofff.logsmith.sniff.LogScanner
+import com.danilgorbunofff.logsmith.sniff.ScanResult
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.project.Project
+import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
-import java.io.InputStream
-import java.util.Locale
+import com.intellij.util.concurrency.AppExecutorUtil
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 
 /**
- * Scores a file against every registered sniffer and reports the winner.
+ * Scores a file against every registered sniffer and reports the outcome.
  *
- * Charter rules (§5.1, §8 Day 3-4):
- * - a fast answer comes from the first [HEAD_LINES] lines; a background pass
- *   then refines the score over up to [REFINE_LINES] lines / [REFINE_BYTES],
- * - scans run off the EDT — the head has its own small pool so one file's long
- *   refinement never delays another file's fast answer; results are posted on
- *   the EDT,
- * - results only get more precise: a failed or empty refinement never
- *   regresses the strip from real stats back to `<unknown>`,
+ * Charter rules (§5.1, §5.3, §8 Day 3-4):
+ * - a fast answer comes from the first [HEAD_LINES] lines; when the head did not cover
+ *   the whole file, a background pass refines it over up to [REFINE_LINES] lines / [REFINE_BYTES],
+ * - scans run off the EDT on platform pools — the head has its own pool so one file's long
+ *   refinement never delays another file's fast answer; results are posted on the EDT,
+ * - every outcome is posted, including "no format matched"; only an I/O failure of the
+ *   refinement keeps the earlier head answer instead of replacing it,
+ * - work is tied to a parent [Disposable] (the editor session): disposing it cancels the
+ *   scan and drops any not-yet-delivered result,
  * - files are read through [VirtualFile] only (R10), byte- and line-bounded.
  */
 @Service(Service.Level.PROJECT)
-class LogSmithDetectionService(@Suppress("unused") private val project: Project) {
+class LogSmithDetectionService : Disposable {
 
-    private val headExecutor: ExecutorService = Executors.newFixedThreadPool(2) { runnable ->
-        Thread(runnable, "LogSmith detection-head").apply { isDaemon = true }
-    }
-    private val refineExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "LogSmith detection-refine").apply { isDaemon = true }
+    private val headExecutor: ExecutorService =
+        AppExecutorUtil.createBoundedApplicationPoolExecutor("LogSmith detection-head", 2)
+    private val refineExecutor: ExecutorService =
+        AppExecutorUtil.createBoundedApplicationPoolExecutor("LogSmith detection-refine", 1)
+
+    /** Handle for one file's detection; disposed together with its parent. */
+    class Job internal constructor() : Disposable {
+        @Volatile
+        var cancelled: Boolean = false
+            private set
+
+        @Volatile
+        internal var posted: DetectionResult? = null
+
+        @Volatile
+        internal var head: Future<*>? = null
+
+        @Volatile
+        internal var refine: Future<*>? = null
+
+        override fun dispose() {
+            cancelled = true
+            head?.cancel(true)
+            refine?.cancel(true)
+        }
+
+        /** Test hook: waits until both scans have finished or were cancelled. */
+        internal fun awaitForTests(timeoutSeconds: Long = 30) {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds)
+            for (pick in listOf<() -> Future<*>?>({ head }, { refine })) {
+                val future = pick() ?: continue
+                try {
+                    future.get(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)
+                } catch (ignored: CancellationException) {
+                } catch (ignored: java.util.concurrent.ExecutionException) {
+                }
+            }
+        }
     }
 
     /** Scans the head of [file], posts the fast answer, then refines in the background. */
-    fun detect(file: VirtualFile, onUpdate: (FormatStats?) -> Unit) {
-        val guard = BestSoFar()
-        headExecutor.submit {
-            post(guard, scanQuietly(file, HEAD_LINES, HEAD_BYTES), onUpdate)
-            refineExecutor.submit {
-                post(guard, scanQuietly(file, REFINE_LINES, REFINE_BYTES), onUpdate)
+    fun detect(file: VirtualFile, parent: Disposable, onUpdate: (DetectionResult) -> Unit): Job {
+        val job = Job()
+        if (!Disposer.tryRegister(parent, job)) {
+            job.dispose()
+            return job
+        }
+        job.head = headExecutor.submit {
+            val head = scanQuietly(file, HEAD_LINES, HEAD_BYTES, job) ?: return@submit
+            post(job, head.result, onUpdate)
+            if (head.complete || head.result is DetectionResult.Failed || job.cancelled) return@submit
+            job.refine = refineExecutor.submit {
+                val refined = scanQuietly(file, REFINE_LINES, REFINE_BYTES, job) ?: return@submit
+                post(job, refined.result, onUpdate)
             }
+        }
+        return job
+    }
+
+    /** null only when the job was cancelled; I/O problems become [DetectionResult.Failed]. */
+    private fun scanQuietly(file: VirtualFile, lines: Int, bytes: Long, job: Job): ScanResult? {
+        if (job.cancelled) return null
+        return try {
+            file.inputStream.use { LogScanner.scan(it, file.charset, lines, bytes) { job.cancelled } }
+        } catch (e: CancellationException) {
+            null
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Exception) {
+            thisLogger().warn("LogSmith could not scan ${file.presentableUrl}", e)
+            ScanResult(DetectionResult.Failed(e.message ?: e.javaClass.simpleName), complete = true)
         }
     }
 
-    private fun scanQuietly(file: VirtualFile, lines: Int, bytes: Long): FormatStats? =
-        try {
-            scanBounded(file, lines, bytes)
-        } catch (ignored: Exception) {
-            null // deleted or unreadable mid-scan; a previous good result must survive
-        }
-
-    /** Posts [candidate] unless it would downgrade an already-posted result to unknown. */
-    private fun post(guard: BestSoFar, candidate: FormatStats?, onUpdate: (FormatStats?) -> Unit) {
-        val stats = candidate ?: guard.posted ?: return
-        if (candidate != null) guard.posted = candidate
-        ApplicationManager.getApplication().invokeLater { onUpdate(stats) }
+    /** Posts [candidate] on the EDT unless it is a failure that would hide an earlier answer. */
+    private fun post(job: Job, candidate: DetectionResult, onUpdate: (DetectionResult) -> Unit) {
+        if (job.cancelled) return
+        if (candidate is DetectionResult.Failed && job.posted != null) return
+        job.posted = candidate
+        ApplicationManager.getApplication().invokeLater(
+            { if (!job.cancelled) onUpdate(candidate) },
+            ModalityState.defaultModalityState(),
+        ) { job.cancelled }
     }
 
-    private class BestSoFar {
-        @Volatile
-        var posted: FormatStats? = null
-    }
-
-    private fun scanBounded(file: VirtualFile, lines: Int, bytes: Long): FormatStats? {
-        file.inputStream.use { raw ->
-            val bounded = BoundedInputStream(raw, bytes)
-            bounded.bufferedReader(Charsets.UTF_8).use { reader ->
-                val scorer = FormatScorer(BuiltinSniffers.all)
-                var counted = 0
-                for (line in reader.lineSequence()) {
-                    scorer.onLine(line)
-                    counted++
-                    if (counted >= lines) {
-                        scorer.markCapped("scan covered the first ${grouped(lines.toLong())} lines")
-                        break
-                    }
-                }
-                if (bounded.hitLimit && counted < lines) {
-                    scorer.markCapped("scan stopped at the ${grouped(bytes / BYTES_PER_MB)} MB byte cap")
-                }
-                return scorer.best()
-            }
-        }
-    }
-
-    private fun grouped(value: Long): String = String.format(Locale.US, "%,d", value)
-
-    /**
-     * InputStream that reports EOF at [limit] bytes and records whether the cap
-     * was reached. No close override: the caller's `use` on the raw stream owns it.
-     */
-    private class BoundedInputStream(private val delegate: InputStream, limit: Long) : InputStream() {
-
-        private var remaining = limit
-
-        var hitLimit: Boolean = false
-            private set
-
-        override fun read(): Int {
-            if (remaining <= 0) {
-                hitLimit = true
-                return -1
-            }
-            val value = delegate.read()
-            if (value >= 0) remaining--
-            return value
-        }
-
-        override fun read(b: ByteArray, off: Int, len: Int): Int {
-            if (remaining <= 0) {
-                hitLimit = true
-                return -1
-            }
-            val capped = minOf(len.toLong(), remaining).toInt()
-            val read = delegate.read(b, off, capped)
-            if (read > 0) remaining -= read
-            return read
-        }
+    override fun dispose() {
+        headExecutor.shutdownNow()
+        refineExecutor.shutdownNow()
     }
 
     companion object {
-        private const val HEAD_LINES = 200
+        internal const val HEAD_LINES = 200
         private const val HEAD_BYTES = 512L * 1024
         private const val REFINE_LINES = 2_000_000
         private const val REFINE_BYTES = 256L * 1024 * 1024
-        private const val BYTES_PER_MB = 1024L * 1024
     }
 }

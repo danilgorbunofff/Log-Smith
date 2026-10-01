@@ -64,7 +64,7 @@ class BuiltinSniffersTest {
     @Test
     fun `python formatter and default format both match`() {
         assertTrue(python.matches("2026-10-01 09:14:00,123 - myapp.routes - DEBUG - loaded 4 routes"))
-        assertTrue(python.matchesContinuation("WARNING:root:disk almost full"))
+        assertTrue(python.matches("WARNING:root:disk almost full"))
         assertTrue(python.matchesContinuation("Traceback (most recent call last):"))
         assertTrue(python.matchesContinuation("  File \"app.py\", line 10, in <module>"))
     }

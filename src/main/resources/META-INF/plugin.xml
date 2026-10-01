@@ -3,13 +3,15 @@
     <name>LogSmith</name>
     <vendor url="https://github.com/danilgorbunofff/Log-Smith">danilgorbunofff</vendor>
     <description>Shows which log format a .log file uses and how many lines matched — in a status line
-attached to the standard editor, with zero configuration. Detects 13 formats, colours records
-(timestamp, thread, logger, level ramp) without ever making rendering worse, and lets you switch
-colouring off per file. Capabilities land day by day per the charter (docs/charter.md).</description>
+under the standard editor, with zero configuration. Recognises 12 log formats plus a plain-timestamp
+fallback, colours timestamps, threads and levels (ERROR red, WARN amber, DEBUG dim) without ever
+making rendering worse, says so plainly when no format matches, and lets you switch colouring off
+per file. The file stays a normal, fully editable text file.</description>
     <depends>com.intellij.modules.platform</depends>
-    <extensions defaultExtensionNs="com.intellij">
-        <fileEditorProvider implementation="com.danilgorbunofff.logsmith.LogSmithFileEditorProvider"/>
-    </extensions>
+    <projectListeners>
+        <listener class="com.danilgorbunofff.logsmith.LogSmithEditorAttacher"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
     <actions>
         <action id="LogSmith.ToggleHighlight"
                 class="com.danilgorbunofff.logsmith.LogSmithToggleHighlightAction"

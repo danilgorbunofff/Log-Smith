@@ -76,9 +76,8 @@ class LogSmithLexerTest {
             "2024-01-01 12:00:00.125 [main] ERROR third line\n"
         val whole = tokenize(text)
         val secondLineStart = text.indexOf("2024-01-01 12:00:00.124")
-        val state = secondLineStart // our getState() is the current line start
         val lexer = lexer()
-        lexer.start(text, secondLineStart, text.length, state)
+        lexer.start(text, secondLineStart, text.length, LogSmithLexer.LINE_START_STATE)
         val resumed = ArrayList<Token>()
         var guard = text.length * 2 + 16
         while (lexer.tokenType != null && guard-- > 0) {
@@ -95,18 +94,25 @@ class LogSmithLexerTest {
     }
 
     @Test
-    fun `restart from state after token skips to the right token`() {
-        val text = "2024-01-01 12:00:00.123 [main] INFO  first\n"
+    fun `only the first token of a line reports the initial state`() {
+        val text = "2024-01-01 12:00:00.123 [main] INFO  first\n\n2024-01-01 12:00:00.124 [main] INFO  second\n"
         val lexer = lexer()
-        // Start once, advance into the middle of the line, capture state.
         lexer.start(text, 0, text.length, 0)
-        lexer.advance()
-        lexer.advance()
-        val state = lexer.getState()
-        assertTrue("state must be a line start", state == 0)
-        // Restart at a later offset with that state.
+        var guard = text.length * 2 + 16
+        while (lexer.tokenType != null && guard-- > 0) {
+            val atLineStart = lexer.tokenStart == 0 || text[lexer.tokenStart - 1] == '\n'
+            val expected = if (atLineStart) LogSmithLexer.LINE_START_STATE else LogSmithLexer.MID_LINE_STATE
+            assertEquals("state at ${lexer.tokenStart}", expected, lexer.state)
+            lexer.advance()
+        }
+        assertEquals(LogSmithLexer.LINE_START_STATE, lexer.state)
+    }
+
+    @Test
+    fun `restart mid line resumes without gaps`() {
+        val text = "2024-01-01 12:00:00.123 [main] INFO  first\n"
         val lexer2 = lexer()
-        lexer2.start(text, 30, text.length, state)
+        lexer2.start(text, 30, text.length, LogSmithLexer.MID_LINE_STATE)
         var guard = 64
         var covered = 30
         while (lexer2.tokenType != null && guard-- > 0) {

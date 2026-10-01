@@ -3,8 +3,10 @@ package com.danilgorbunofff.logsmith.sniff
 /**
  * Pure scanner that scores every sniffer over a line stream and picks the
  * winner: the highest share of explained lines (record or continuation),
- * ties broken by sniffer priority. Blank lines never count. No platform
- * imports — this is the part the unit tests cover directly.
+ * ties broken by sniffer priority. Blank lines never count. A sniffer must
+ * match at least one *record* line to win — continuation patterns alone
+ * (e.g. "any indented line") never claim a file. No platform imports — this
+ * is the part the unit tests cover directly.
  */
 class FormatScorer(sniffers: List<LogFormatSniffer>) {
 
@@ -12,6 +14,7 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
     private val ordered: List<LogFormatSniffer> = sniffers.sortedByDescending { it.priority }
 
     private val explained = LongArray(ordered.size)
+    private val records = LongArray(ordered.size)
     private var scanned = 0L
     private var capNote: String? = null
 
@@ -21,7 +24,10 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
         scanned++
         for (index in ordered.indices) {
             val sniffer = ordered[index]
-            if (sniffer.matches(line) || sniffer.matchesContinuation(line)) {
+            if (sniffer.matches(line)) {
+                records[index]++
+                explained[index]++
+            } else if (sniffer.matchesContinuation(line)) {
                 explained[index]++
             }
         }
@@ -31,21 +37,33 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
         capNote = note
     }
 
-    /** Highest ratio wins; ties go to the higher-priority sniffer. */
-    fun best(): FormatStats? {
+    /** Highest ratio among sniffers with at least one record line; ties go to the higher priority. */
+    fun bestCandidate(): FormatStats? {
         if (scanned == 0L) return null
         var bestIndex = -1
         var bestCount = 0L
         for (index in ordered.indices) {
-            if (explained[index] > bestCount) {
+            if (records[index] > 0 && explained[index] > bestCount) {
                 bestCount = explained[index]
                 bestIndex = index
             }
         }
         if (bestIndex < 0) return null
         val stats = FormatStats(ordered[bestIndex].formatName, explained[bestIndex].toInt(), scanned.toInt())
-        if (stats.ratio < MIN_RATIO) return null
         return capNote?.let { stats.copy(note = it) } ?: stats
+    }
+
+    /** The winner, or null when no candidate reaches [MIN_RATIO]. */
+    fun best(): FormatStats? = bestCandidate()?.takeIf { it.ratio >= MIN_RATIO }
+
+    /** The full outcome of this scan, including an honest "nothing matched". */
+    fun result(): DetectionResult {
+        val candidate = bestCandidate()
+        return if (candidate != null && candidate.ratio >= MIN_RATIO) {
+            DetectionResult.Matched(candidate)
+        } else {
+            DetectionResult.NoMatch(candidate, scanned.toInt(), capNote)
+        }
     }
 
     companion object {

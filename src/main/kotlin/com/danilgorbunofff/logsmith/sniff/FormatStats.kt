@@ -14,11 +14,17 @@ data class FormatStats(
     val ratio: Double
         get() = if (scanned == 0) 0.0 else matched.toDouble() / scanned
 
-    override fun toString(): String {
-        val percent = (ratio * 1000).roundToInt() / 10.0
-        return "Format: $formatName — matched ${group(matched)} / ${group(scanned)} lines (" +
-            String.format(Locale.US, "%.1f", percent) + "%)" + (note?.let { " — $it" } ?: "")
-    }
+    /** One-decimal percentage; never rounds up to 100.0% while a line is unmatched. */
+    val percentText: String
+        get() {
+            var tenths = (ratio * 1000).roundToInt()
+            if (tenths == 1000 && matched < scanned) tenths = 999
+            return String.format(Locale.US, "%.1f", tenths / 10.0) + "%"
+        }
+
+    override fun toString(): String =
+        "Format: $formatName — matched ${group(matched)} / ${group(scanned)} lines ($percentText)" +
+            (note?.let { " — $it" } ?: "")
 
     private fun group(value: Int): String = String.format(Locale.US, "%,d", value)
 

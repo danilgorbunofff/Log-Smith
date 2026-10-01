@@ -9,6 +9,12 @@ import com.intellij.psi.tree.IElementType
  * token so the whole buffer is accounted for, as [LexerEditorHighlighter]
  * requires. Lexing restarts re-segment only from a known line start, and
  * deep starts are reached by a cheap per-line fast-forward — never recursion.
+ *
+ * State contract (what lets [com.intellij.openapi.editor.ex.util.LexerEditorHighlighter]
+ * re-lex incrementally): the first token of every line reports [LINE_START_STATE] (0, the
+ * initial state), every other token reports [MID_LINE_STATE]. The highlighter therefore
+ * restarts at the edited line's start and stops at the first unchanged line after it.
+ * Lines carry no state into each other, so the state value itself is never needed on restart.
  */
 class LogSmithLexer(private val segmenter: LineSegmenter) : LexerBase() {
 
@@ -33,16 +39,12 @@ class LogSmithLexer(private val segmenter: LineSegmenter) : LexerBase() {
         this.buffer = buffer
         this.endOffset = endOffset.coerceAtMost(buffer.length)
         done = false
-        val state = initialState
-        if (state in 0..startOffset && state <= buffer.length && isLineStart(state)) {
-            beginAt(state, skipThrough = startOffset)
-        } else {
-            beginAt(lineStartOf(startOffset), skipThrough = startOffset)
-        }
+        beginAt(lineStartOf(startOffset.coerceIn(0, buffer.length)), skipThrough = startOffset)
         emitNext()
     }
 
-    override fun getState(): Int = if (done) buffer.length else lineStart
+    override fun getState(): Int =
+        if (done || tokenStart == lineStart) LINE_START_STATE else MID_LINE_STATE
 
     override fun getTokenType(): IElementType? = tokenType
 
@@ -176,6 +178,8 @@ class LogSmithLexer(private val segmenter: LineSegmenter) : LexerBase() {
         return i
     }
 
-    private fun isLineStart(state: Int): Boolean =
-        state == 0 || (state <= buffer.length && buffer[state - 1] == '\n')
+    companion object {
+        const val LINE_START_STATE = 0
+        const val MID_LINE_STATE = 1
+    }
 }

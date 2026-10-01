@@ -17,7 +17,7 @@
 java.lang.NullPointerException: Cannot invoke "User.getEmail()" because "user" is null
 	at com.example.service.UserService.sendWelcomeEmail(UserService.java:128)
 	at com.example.web.UserController.create(UserController.java:64)
-2026-10-01 09:14:02.320  WARN [scheduling-1] c.e.s.CleanupJob - 3 stale sessions removed HELLO TEST!!!!!
+2026-10-01 09:14:02.320  WARN [scheduling-1] c.e.s.CleanupJob - 3 stale sessions removed
 2026-10-01 09:14:03.010 DEBUG [http-nio-8080-exec-7] org.hibernate.SQL - 
     insert
     into

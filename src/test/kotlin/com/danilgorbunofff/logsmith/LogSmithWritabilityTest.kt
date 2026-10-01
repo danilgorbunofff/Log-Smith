@@ -1,57 +1,107 @@
 package com.danilgorbunofff.logsmith
 
-import com.danilgorbunofff.logsmith.highlight.LineSegmenter
-import com.danilgorbunofff.logsmith.highlight.LogSmithLexer
-import com.danilgorbunofff.logsmith.highlight.LogSmithSyntaxHighlighter
-import com.danilgorbunofff.logsmith.sniff.BuiltinSniffers
-import com.intellij.testFramework.LightVirtualFile
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import com.danilgorbunofff.logsmith.sniff.DetectionResult
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.testFramework.PlatformTestUtil
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.Component
+import java.awt.Container
+import javax.swing.JLabel
 
 /**
- * R4: LogSmith must never mutate the user's file. A full editor attach needs an IDE
- * instance (basePlatform unavailable in pure-JVM tests), so this test covers the parts
- * of the attach path that can run headless: provider gating and lexer/highlighter
- * construction over the document text. isWritable is asserted before/after.
+ * R4 (charter §5.2): LogSmith must never change whether a file can be edited.
+ * The attach path runs for real here — session, status strip, detection and the
+ * highlighter swap — and writability is asserted before and after, then the file
+ * is edited and saved through the normal document APIs.
  */
-class LogSmithWritabilityTest {
+class LogSmithWritabilityTest : BasePlatformTestCase() {
 
-    @Test
-    fun `provider accepts log files only`() {
-        val provider = LogSmithFileEditorProvider()
-        val log = LightVirtualFile("app.log")
-        val out = LightVirtualFile("run.out")
-        val txt = LightVirtualFile("notes.txt")
-        assertTrue(provider.isSupported(log))
-        assertTrue(provider.isSupported(out))
-        assertFalse(provider.isSupported(txt))
+    private val sample = "2026-10-01 09:00:00.001 [main] INFO  c.e.App - started\n" +
+        "2026-10-01 09:00:00.002 [main] ERROR c.e.App - boom\n" +
+        "\tat com.example.App.main(App.java:10)\n"
+
+    private fun attach(file: VirtualFile): LogSmithEditorSession {
+        val manager = FileEditorManager.getInstance(project)
+        LogSmithEditorAttacher.attachAll(manager, file)
+        val session = myFixture.editor.getUserData(LogSmithEditorSession.SESSION_KEY)
+        assertNotNull("LogSmith did not attach to ${file.name}", session)
+        session!!.detection!!.awaitForTests()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        return session
     }
 
-    @Test
-    fun `lexing and highlighter construction never touch the file`() {
-        val content = "2024-01-01 12:00:00.123 [main] INFO  hello\n"
-        val file = LightVirtualFile("app.log", content)
-        val wasWritable = file.isWritable
-
-        val segmenter = LineSegmenter(BuiltinSniffers.byName.getValue("Logback / Log4j 2"))
-        val highlighter = LogSmithSyntaxHighlighter(segmenter)
-        val lexer = highlighter.highlightingLexer
-        lexer.start(content, 0, content.length, 0)
-        var guard = content.length * 2 + 16
-        while (lexer.tokenType != null && guard-- > 0) lexer.advance()
-
-        assertEquals(wasWritable, file.isWritable)
+    fun `test supported extensions`() {
+        assertTrue(LogSmithEditorAttacher.hasSupportedExtension("app.log"))
+        assertTrue(LogSmithEditorAttacher.hasSupportedExtension("RUN.OUT"))
+        assertFalse(LogSmithEditorAttacher.hasSupportedExtension("notes.txt"))
+        assertFalse(LogSmithEditorAttacher.hasSupportedExtension("log"))
     }
 
-    @Test
-    fun `writeable file stays writeable, read-only stays read-only`() {
-        val writable = LightVirtualFile("a.log")
-        writable.setWritable(true)
-        assertTrue(writable.isWritable)
-        val readOnly = LightVirtualFile("b.log")
-        readOnly.setWritable(false)
-        assertFalse(readOnly.isWritable)
+    fun `test attach keeps the file writable and editable`() {
+        val file = myFixture.configureByText("app.log", sample).virtualFile
+        val document = myFixture.editor.document
+        assertTrue(file.isWritable)
+        assertTrue(document.isWritable)
+
+        val session = attach(file)
+
+        assertTrue("file became read-only", file.isWritable)
+        assertTrue("document became read-only", document.isWritable)
+        assertTrue(session.result is DetectionResult.Matched)
+        assertTrue("highlighter not installed", session.isHighlighting)
+
+        myFixture.editor.caretModel.moveToOffset(document.textLength)
+        myFixture.type("2026-10-01 09:00:00.003 [main] INFO  c.e.App - typed by the test\n")
+        FileDocumentManager.getInstance().saveDocument(document)
+        assertTrue(String(file.contentsToByteArray(), file.charset).contains("typed by the test"))
+        assertTrue(file.isWritable)
+    }
+
+    fun `test read-only file stays read-only`() {
+        val file = myFixture.configureByText("ro.log", sample).virtualFile
+        com.intellij.openapi.application.WriteAction.run<Exception> { file.isWritable = false }
+        attach(file)
+        assertFalse(file.isWritable)
+        com.intellij.openapi.application.WriteAction.run<Exception> { file.isWritable = true }
+    }
+
+    fun `test status strip is laid out with a real size`() {
+        val file = myFixture.configureByText("app.log", sample).virtualFile
+        val session = attach(file)
+        val root = session.strip.root
+        root.setSize(800, root.preferredSize.height)
+        layoutTree(root)
+        val label = findLabel(root)
+        assertNotNull(label)
+        assertTrue("status label has no on-screen size: ${label!!.bounds}", label.width > 0 && label.height > 0)
+        assertTrue(label.text, label.text.startsWith("Format: Logback / Log4j 2 — matched 3 / 3 lines"))
+    }
+
+    fun `test non-log files are not attached`() {
+        val txt = myFixture.configureByText("notes.txt", sample).virtualFile
+        assertEmpty(LogSmithEditorAttacher.attachAll(FileEditorManager.getInstance(project), txt))
+        assertNull(myFixture.editor.getUserData(LogSmithEditorSession.SESSION_KEY))
+    }
+
+    fun `test binary out file is not supported`() {
+        val bytes = byteArrayOf(0x7F, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte(), 0, 0, 0, 1, 2, 0, 0, 0)
+        val aOut = myFixture.tempDirFixture.createFile("a.out")
+        com.intellij.openapi.application.WriteAction.run<Exception> { aOut.setBinaryContent(bytes) }
+        assertFalse("binary a.out must not be treated as a log", LogSmithEditorAttacher.isSupported(aOut))
+    }
+
+    private fun layoutTree(c: Component) {
+        if (c is Container) {
+            c.doLayout()
+            c.components.forEach { layoutTree(it) }
+        }
+    }
+
+    private fun findLabel(c: Component): JLabel? {
+        if (c is JLabel) return c
+        if (c is Container) c.components.forEach { child -> findLabel(child)?.let { return it } }
+        return null
     }
 }

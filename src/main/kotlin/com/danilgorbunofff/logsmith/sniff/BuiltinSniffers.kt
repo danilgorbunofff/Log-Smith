@@ -35,9 +35,13 @@ object BuiltinSniffers {
     private val logback = Pattern.compile(
         """\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?\s+(?:\[[^\]]*\]\s+)?""" + LEVEL + """\b.*"""
     )
-    private val logbackContinuation = Pattern.compile(
+    /** JVM stack-trace lines: frames, causes, elided frames, and the exception header line. */
+    private val JAVA_STACK =
         """(?:\s+at .*)|(?:Caused by: .*)|(?:\s*\.{3} (?:\d+ )?more.*)""" +
-            """|(?:[a-z]\w*(?:\.[\w$]+)+\.[A-Za-z]\w*(?:Exception|Error|Throwable)\b(?:: .*)?)|(?:\s{2,}\S.*)""",
+            """|(?:[a-z]\w*(?:\.[\w$]+)+\.[A-Za-z]\w*(?:Exception|Error|Throwable)\b(?:: .*)?)"""
+
+    private val logbackContinuation = Pattern.compile(
+        JAVA_STACK + """|(?:\s{2,}\S.*)""",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -46,15 +50,17 @@ object BuiltinSniffers {
         """(?:""" + MONTH + """ \d{1,2}, \d{4} \d{1,2}:\d{2}:\d{2} (?:AM|PM) [\w$.]+ [\w$.]+)""" +
             """|(?:\d{1,2}-""" + MONTH + """-\d{4} \d{2}:\d{2}:\d{2}\.\d{1,3} """ + JUL_LEVEL + """ \[[^\]]*\].*)"""
     )
-    private val julContinuation = Pattern.compile(JUL_LEVEL + """: .*""")
+    private val julContinuation = Pattern.compile("""(?:""" + JUL_LEVEL + """: .*)|""" + JAVA_STACK)
 
     /** 3. Python logging — `date - name - LEVEL - msg` and the default `LEVEL:logger:msg`. */
     private val python = Pattern.compile(
-        """\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{1,3} - [\w.]+ - """ + LEVEL + """ - .*"""
-    )
-    private val pythonContinuation = Pattern.compile(
-        """(?:Traceback \(most recent call last\):)|(?:\s+File "[^"]*", line \d+.*)""" +
+        """(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{1,3} - [\w.]+ - """ + LEVEL + """ - .*)""" +
             """|(?:""" + LEVEL + """:[\w.]+:.*)"""
+    )
+    /** Traceback header, `File "x", line N` frames, their indented source lines, and the final `XxxError: msg`. */
+    private val pythonContinuation = Pattern.compile(
+        """(?:Traceback \(most recent call last\):)|(?:\s+File "[^"]*", line \d+.*)|(?:\s{4,}\S.*)""" +
+            """|(?:[A-Za-z_][\w.]*(?:Error|Exception|Warning|Exit|Interrupt)\b(?::.*)?)"""
     )
 
     /** 4. Go — stdlib `2009/11/10 23:00:00` (with optional file:line) and slog RFC3339. */
@@ -101,6 +107,8 @@ object BuiltinSniffers {
         """(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,9} [+-]\d{2}:\d{2} \[[^\]]+\] .*)""" +
             """|(?:""" + DOTNET_LEVEL + """: \S+\[\d+\].*)"""
     )
+    /** The console formatter prints the message on the next line, indented six spaces; stack frames follow. */
+    private val dotnetContinuation = Pattern.compile("""(?: {6}\S.*)|(?:\s+at .*)|(?:\s*--- End of .*)""")
 
     /** 12. syslog — RFC3164 with optional <PRI>, and the ISO8601 rsyslog variant. */
     private val syslog = Pattern.compile(
@@ -124,7 +132,7 @@ object BuiltinSniffers {
         RegexSniffer("Apache error", 40, apacheError, timestamp = TS_APACHE),
         RegexSniffer("PHP / Laravel (Monolog)", 30, monolog, timestamp = TS_SQ),
         RegexSniffer("Django / gunicorn", 30, django, timestamp = varargOf(TS_SQ, TS_DJANGO)),
-        RegexSniffer(".NET (Microsoft.Extensions.Logging)", 30, dotnet, timestamp = TS_ISO_TZ),
+        RegexSniffer(".NET (Microsoft.Extensions.Logging)", 30, dotnet, dotnetContinuation, TS_ISO_TZ),
         RegexSniffer("syslog", 30, syslog, timestamp = varargOf(TS_SYSLOG, TS_ISO_MID)),
         RegexSniffer("Plain timestamp", 10, plainTimestamp, timestamp = TS_ISO),
     )
