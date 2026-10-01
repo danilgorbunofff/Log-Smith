@@ -111,7 +111,7 @@ Paste your 0–6 answers back in the chat. That's the whole job.
 
 **4 — big.log (400 MB / 3,225,600 lines):** fast load, no freeze — "all scrolls easily and fast loaded". Tail checkbox present; filter box present (explicit ERROR-filter run not recorded). `Text` fallback for the big file = WebStorm's built-in "Large File Editor". → axis C conceded to LogLens.
 
-**5 — editability:** **PENDING** — screenshot/answer not delivered. One 30-second check remains: with LogLens ENABLED, open the `Text` tab of `hibernate.log`, click in the text, type `HELLO TEST`, press `Ctrl+S`.
+**5 — editability:** **PASS** — with LogLens ENABLED, the `Text` tab is a real editor: typed and saved (`Ctrl+S`) successfully. LogLens does not take the file over. → editability is table stakes; the wedge narrows to axis A (+ R9's ANSI gap).
 
 **6 — re-enable:** done.
 
