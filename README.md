@@ -10,9 +10,16 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
 
 - **Day 0 gate: GO-NARROWED CONFIRMED** — market sweep, competitor verification, and a GUI
   death-test pass against LogLens are recorded in [`docs/day0-gate.md`](docs/day0-gate.md).
-- **Day 1–2 in progress**: first installable build. The plugin attaches to the platform text
+- **Day 1–2 done**: first installable build. The plugin attaches to the platform text
   editor for `.log` / `.out` files and shows `Format: <unknown>` → real format after the first
   200 lines are scanned.
+- **Day 3–4 done: detection engine.** 12 built-in format sniffers plus a plain-timestamp
+  fallback (Logback/Log4j 2, java.util.logging, Python logging, Go log/slog, structured JSON,
+  nginx/Apache access + error, PHP Monolog, Django/gunicorn, .NET, syslog, and more), stack-trace
+  and continuation-line handling, and a match-ratio score. Detection scans the first 200 lines
+  in the background for a fast first answer, then refines up to 2M lines / 256 MB; the status
+  line reports e.g. `Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%)`. 24 unit
+  tests cover every sniffer plus the scorer.
 
 ## Building
 

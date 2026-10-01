@@ -14,13 +14,23 @@ interface LogFormatSniffer {
     val priority: Int
 
     fun matches(line: String): Boolean
+
+    /**
+     * Lines that belong to the format without carrying a full record shape —
+     * stack frames, wrapped messages, indented payloads. Counted as explained.
+     */
+    fun matchesContinuation(line: String): Boolean = false
 }
 
 class RegexSniffer(
     override val formatName: String,
     override val priority: Int,
     private val pattern: Pattern,
+    private val continuation: Pattern? = null,
 ) : LogFormatSniffer {
 
     override fun matches(line: String): Boolean = pattern.matcher(line).matches()
+
+    override fun matchesContinuation(line: String): Boolean =
+        continuation?.matcher(line)?.matches() == true
 }
