@@ -26,12 +26,28 @@ class LogSmithTextEditor(
 ) : UserDataHolderBase(), TextEditor {
 
     private val strip = LogSmithStatusStrip()
+    private val installer: LogSmithHighlighterInstaller? =
+        (delegate.editor as? com.intellij.openapi.editor.ex.EditorEx)
+            ?.let { LogSmithHighlighterInstaller(it, file) }
     private val panel: JComponent = strip.root.also {
         it.add(delegate.component, java.awt.BorderLayout.CENTER)
     }
 
     init {
-        project.getService(LogSmithDetectionService::class.java).detect(file, strip::show)
+        project.getService(LogSmithDetectionService::class.java).detect(file, ::onDetected)
+    }
+
+    private fun onDetected(stats: com.danilgorbunofff.logsmith.sniff.FormatStats?) {
+        strip.show(stats)
+        installer?.update(stats)
+    }
+
+    /** Called by the toggle action; keeps the strip and highlighter in step. */
+    fun onToggle() {
+        val nowDisabled = file.getUserData(logSmithHighlightDisabled) != true
+        file.putUserData(logSmithHighlightDisabled, nowDisabled)
+        installer?.update(null) // update(null) refreshes with the installer's last known stats
+        if (nowDisabled) strip.showDisabled() else strip.showEnabled()
     }
 
     override fun getEditor(): Editor = delegate.editor

@@ -13,6 +13,14 @@ interface LogFormatSniffer {
     /** Higher priority wins ties between equal match ratios. */
     val priority: Int
 
+    /**
+     * Timestamp sub-pattern, used by the highlighter to colour the leading
+     * date/time region of a record. Null when the format has no colourable
+     * timestamp (e.g. JSON). The pattern is written to match either the very
+     * start of a record or the interior of a bracketed field, without brackets.
+     */
+    val timestamp: Pattern? get() = null
+
     fun matches(line: String): Boolean
 
     /**
@@ -27,6 +35,7 @@ class RegexSniffer(
     override val priority: Int,
     private val pattern: Pattern,
     private val continuation: Pattern? = null,
+    override val timestamp: Pattern? = null,
 ) : LogFormatSniffer {
 
     override fun matches(line: String): Boolean = pattern.matcher(line).matches()

@@ -22,7 +22,9 @@ class LogSmithFileEditorProvider : FileEditorProvider, DumbAware {
 
     override fun getPolicy(): FileEditorPolicy = FileEditorPolicy.HIDE_DEFAULT_EDITOR
 
-    override fun accept(project: Project, file: VirtualFile): Boolean {
+    override fun accept(project: Project, file: VirtualFile): Boolean = isSupported(file)
+
+    internal fun isSupported(file: VirtualFile): Boolean {
         if (file.isDirectory || !file.isValid) return false
         val extension = file.name.substringAfterLast('.', "").lowercase()
         return extension in SUPPORTED_EXTENSIONS

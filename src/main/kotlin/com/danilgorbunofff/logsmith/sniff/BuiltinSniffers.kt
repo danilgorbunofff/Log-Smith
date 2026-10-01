@@ -14,6 +14,23 @@ object BuiltinSniffers {
     private val JUL_LEVEL = "(?:SEVERE|WARNING|INFO|CONFIG|FINE|FINER|FINEST)"
     private val MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
 
+    // Timestamp sub-patterns for the highlighter (match a record's date region,
+    // either at offset 0 of a line or as the interior of a bracketed field).
+    private val TS_ISO = Pattern.compile("""\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?""")
+    private val TS_ISO_TZ = Pattern.compile(TS_ISO.pattern() + """(?: [+-]\d{2}:\d{2})?""")
+    private val TS_ISO_MID = Pattern.compile("""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?""")
+    private val TS_JUL = Pattern.compile(MONTH + """ \d{1,2}, \d{4} \d{1,2}:\d{2}:\d{2} (?:AM|PM)""")
+    private val TS_JULI = Pattern.compile("""\d{1,2}-""" + MONTH + """-\d{4} \d{2}:\d{2}:\d{2}\.\d{1,3}""")
+    private val TS_GO = Pattern.compile("""\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}""")
+    private val TS_SYSLOG = Pattern.compile("""(?:<\d{1,3}>)?""" + MONTH + """\s+\d{1,2} \d{2}:\d{2}:\d{2}""")
+    private val TS_SQ = Pattern.compile("""\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?: [+-]\d{4})?""")
+    private val TS_DJANGO = Pattern.compile("""\d{1,2}/""" + MONTH + """/\d{4} \d{2}:\d{2}:\d{2}""")
+    private val TS_APACHE = Pattern.compile("""[A-Z][a-z]{2} """ + MONTH + """ \d{2} \d{2}:\d{2}:\d{2}\.\d{1,6} \d{4}""")
+    private val TS_ACCESS = Pattern.compile("""\d{2}/""" + MONTH + """/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}""")
+
+    private fun varargOf(vararg patterns: Pattern): Pattern =
+        Pattern.compile(patterns.joinToString("|") { it.pattern() })
+
     /** 1. Logback / Log4j 2 — timestamp, then level and optional [thread] in either order. */
     private val logback = Pattern.compile(
         """\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?\s+(?:\[[^\]]*\]\s+)?""" + LEVEL + """\b.*"""
@@ -97,18 +114,21 @@ object BuiltinSniffers {
     )
 
     val all: List<LogFormatSniffer> = listOf(
-        RegexSniffer("Logback / Log4j 2", 20, logback, logbackContinuation),
-        RegexSniffer("java.util.logging", 30, jul, julContinuation),
-        RegexSniffer("Python logging", 30, python, pythonContinuation),
-        RegexSniffer("Go log / slog", 30, go),
+        RegexSniffer("Logback / Log4j 2", 20, logback, logbackContinuation, TS_ISO),
+        RegexSniffer("java.util.logging", 30, jul, julContinuation, varargOf(TS_JUL, TS_JULI)),
+        RegexSniffer("Python logging", 30, python, pythonContinuation, TS_ISO),
+        RegexSniffer("Go log / slog", 30, go, timestamp = varargOf(TS_GO, TS_ISO_MID)),
         RegexSniffer("Structured JSON", 30, structuredJson),
-        RegexSniffer("nginx / Apache access", 40, nginxAccess),
-        RegexSniffer("nginx error", 40, nginxError),
-        RegexSniffer("Apache error", 40, apacheError),
-        RegexSniffer("PHP / Laravel (Monolog)", 30, monolog),
-        RegexSniffer("Django / gunicorn", 30, django),
-        RegexSniffer(".NET (Microsoft.Extensions.Logging)", 30, dotnet),
-        RegexSniffer("syslog", 30, syslog),
-        RegexSniffer("Plain timestamp", 10, plainTimestamp),
+        RegexSniffer("nginx / Apache access", 40, nginxAccess, timestamp = TS_ACCESS),
+        RegexSniffer("nginx error", 40, nginxError, timestamp = TS_GO),
+        RegexSniffer("Apache error", 40, apacheError, timestamp = TS_APACHE),
+        RegexSniffer("PHP / Laravel (Monolog)", 30, monolog, timestamp = TS_SQ),
+        RegexSniffer("Django / gunicorn", 30, django, timestamp = varargOf(TS_SQ, TS_DJANGO)),
+        RegexSniffer(".NET (Microsoft.Extensions.Logging)", 30, dotnet, timestamp = TS_ISO_TZ),
+        RegexSniffer("syslog", 30, syslog, timestamp = varargOf(TS_SYSLOG, TS_ISO_MID)),
+        RegexSniffer("Plain timestamp", 10, plainTimestamp, timestamp = TS_ISO),
     )
+
+    /** Lookup by format name for the toggle/installer wiring. */
+    val byName: Map<String, LogFormatSniffer> = all.associateBy { it.formatName }
 }

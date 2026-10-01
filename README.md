@@ -20,6 +20,16 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   in the background for a fast first answer, then refines up to 2M lines / 256 MB; the status
   line reports e.g. `Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%)`. 24 unit
   tests cover every sniffer plus the scorer.
+- **Day 5–6 done: highlighting that never makes things worse.** A custom line-oriented lexer
+  maps each region (timestamp, level, thread, logger, message, stack frames) onto its own colour
+  token; unrecognised lines and whole unmatched files fall back to the platform's default
+  rendering (§5.4 — never worse than plain text). Users can right-click a log file and choose
+  *Disable LogSmith highlighting for this file*; the plugin restores the stock editor highlighter
+  on toggle and on editor close. 49 unit tests total, all green (24 sniffer, 17 segmenter,
+  5 lexer coverage/restart, 3 provider-gate). Known deviations, to be revisited: tests are pure
+  JVM (no IDE fixture), the writability test covers the provider gate + lexer rather than a live
+  editor attach, and `createTextAttributesKey(key, attrs)` is deprecated but kept until the
+  Day-10 settings page replaces it.
 
 ## Building
 
