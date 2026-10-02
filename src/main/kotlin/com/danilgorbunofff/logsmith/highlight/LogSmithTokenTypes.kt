@@ -27,6 +27,13 @@ object LogSmithTokenTypes {
     val LEVEL_DEBUG: IElementType = IElementType("LOGSMITH_LEVEL_DEBUG", LogSmithLanguage.INSTANCE)
     val GENERIC: IElementType = IElementType("LOGSMITH_GENERIC", LogSmithLanguage.INSTANCE)
     val WS: IElementType = IElementType("LOGSMITH_WS", LogSmithLanguage.INSTANCE)
+
+    /**
+     * The escape sequences themselves: text the editor must keep, but must never show
+     * ([AnsiAttributes.escape] is how). Deliberately no colour key: the attributes that hide
+     * them are derived from the editor's own background, which a static key cannot express.
+     */
+    val ANSI_ESCAPE: IElementType = IElementType("LOGSMITH_ANSI_ESCAPE", LogSmithLanguage.INSTANCE)
 }
 
 /**

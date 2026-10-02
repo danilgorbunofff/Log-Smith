@@ -164,13 +164,85 @@ class LineSegmenterTest {
     fun `no span is empty and spans cover the line`() {
         val s = seg("Logback / Log4j 2")
         val line = "2024-01-01 12:00:00.123 [main] INFO  com.example.App - all good"
-        val spans = s.spans(line)
+        assertTiles(line, s.spans(line))
+    }
+
+    /** Asserts the spans tile [line] exactly: ascending, gapless, no empty span. */
+    private fun assertTiles(line: String, spans: List<Span>) {
         var covered = 0
         for (span in spans) {
-            assertTrue(span.end > span.start)
-            assertEquals(covered, span.start)
+            assertTrue("span $span must not be empty", span.end > span.start)
+            assertEquals("span $span must start where the previous ended", covered, span.start)
             covered = span.end
         }
-        assertEquals(line.length, covered)
+        assertEquals("spans must cover the whole line", line.length, covered)
+    }
+
+    private fun esc(vararg codes: Int) = codes.joinToString("", "\u001B[", "m")
+
+    @Test
+    fun `ansi - escapes are their own spans and the ramp survives`() {
+        val s = seg("Logback / Log4j 2")
+        val line = "${esc(32)}2024-01-01 12:00:00.123 [main] INFO  com.example.App - all good${esc(0)}"
+        val spans = s.spans(line)
+        assertTiles(line, spans)
+        assertEquals(LogSmithTokenTypes.ANSI_ESCAPE, spans.first().type)
+        assertEquals(0, spans.first().start)
+        assertEquals(esc(32).length, spans.first().end)
+        assertEquals(LogSmithTokenTypes.ANSI_ESCAPE, spans.last().type)
+        assertEquals(line.length, spans.last().end)
+        assertEquals(LogSmithTokenTypes.TIMESTAMP, typeOf(line, s, "2024-01-01 12:00:00.123"))
+        assertEquals(LogSmithTokenTypes.LEVEL_INFO, typeOf(line, s, "INFO"))
+        assertEquals(LogSmithTokenTypes.MESSAGE, typeOf(line, s, "all"))
+    }
+
+    @Test
+    fun `ansi - a sequence inside a token cuts the token in two`() {
+        val s = seg("Plain timestamp")
+        val line = "2024-01-01 12:00:00 ERROR bo${esc(1)}om"
+        val spans = s.spans(line)
+        assertTiles(line, spans)
+        assertEquals(LogSmithTokenTypes.MESSAGE, typeOf(line, s, "bo"))
+        assertEquals(LogSmithTokenTypes.MESSAGE, typeOf(line, s, "om"))
+        val escape = spans.first { it.type == LogSmithTokenTypes.ANSI_ESCAPE }
+        assertEquals(line.indexOf(esc(1)), escape.start)
+        assertEquals(line.indexOf(esc(1)) + esc(1).length, escape.end)
+    }
+
+    @Test
+    fun `ansi - an unterminated sequence runs to the end of the line`() {
+        val s = seg("Plain timestamp")
+        val line = "2024-01-01 12:00:00 ERROR boom\u001B[1;3"
+        val spans = s.spans(line)
+        assertTiles(line, spans)
+        assertEquals(LogSmithTokenTypes.ANSI_ESCAPE, spans.last().type)
+        assertEquals(line.length, spans.last().end)
+    }
+
+    @Test
+    fun `ansi - a line of escapes only is one escape span`() {
+        val s = seg("Logback / Log4j 2")
+        val line = esc(31, 1)
+        val spans = s.spans(line)
+        assertTiles(line, spans)
+        assertEquals(1, spans.size)
+        assertEquals(LogSmithTokenTypes.ANSI_ESCAPE, spans[0].type)
+    }
+
+    @Test
+    fun `ansi - a line the format cannot explain still tiles around its escapes`() {
+        val s = seg("Logback / Log4j 2")
+        val line = "${esc(31)}not a log line at all${esc(0)}"
+        val spans = s.spans(line)
+        assertTiles(line, spans)
+        assertEquals(3, spans.size)
+        assertEquals(LogSmithTokenTypes.GENERIC, typeOf(line, s, "not a log line at all"))
+    }
+
+    @Test
+    fun `ansi - an escape-free line gains no escape span`() {
+        val s = seg("Logback / Log4j 2")
+        val line = "2024-01-01 12:00:00.123 [main] INFO  com.example.App - all good"
+        assertTrue(s.spans(line).none { it.type == LogSmithTokenTypes.ANSI_ESCAPE })
     }
 }

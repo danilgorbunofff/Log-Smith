@@ -16,6 +16,7 @@ import com.intellij.openapi.editor.highlighter.HighlighterIterator
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.psi.tree.IElementType
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.Color
 
 /**
  * §5.3 (R5): visible-range highlighting. Nothing may lex more than a window of lines,
@@ -292,5 +293,53 @@ class LazyHighlighterTest : BasePlatformTestCase() {
         val highlighter = highlighterFor(document)
         highlighter.setColorScheme(EditorColorsManager.getInstance().globalScheme)
         assertTrue(walk(highlighter.createIterator(0), document.textLength).isNotEmpty())
+    }
+
+    private fun esc(vararg codes: Int) = codes.joinToString("", "\u001B[", "m")
+
+    /** A record line the ramp colours, wrapped in the SGR sequences a terminal would send. */
+    private fun colouredLine(colour: Int, level: String = "ERROR"): String =
+        "${esc(colour)}2026-10-01 09:00:00.000 [main] $level c.e.App - boom${esc(0)}"
+
+    fun `test ansi colour overrides the ramp and the escapes show no ink`() {
+        val text = logText(3) + colouredLine(32) + "\n" + logText(3)
+        val document = document(text)
+        val highlighter = highlighterFor(document)
+        val tokens = walkTyped(highlighter.createIterator(0), document.textLength)
+        val scheme = EditorColorsManager.getInstance().globalScheme
+
+        val escapes = tokens.filter { it.type == LogSmithTokenTypes.ANSI_ESCAPE }
+        assertEquals("both sequences must be tokens of their own", 2, escapes.size)
+        for (token in escapes) {
+            assertEquals(
+                "an escape sequence must paint no ink of its own",
+                scheme.defaultBackground,
+                token.attributes.foregroundColor,
+            )
+        }
+        val error = tokens.first {
+            it.type == LogSmithTokenTypes.LEVEL_ERROR && it.start > escapes.first().start
+        }
+        assertEquals("the log's own colour wins over the ramp", Color(0x00CD00), error.attributes.foregroundColor)
+        // The uncoloured lines around it keep the plain ramp.
+        assertTrue(
+            "the lines around a coloured one must stay coloured",
+            tokens.count { it.type == LogSmithTokenTypes.LEVEL_ERROR } > 1,
+        )
+    }
+
+    fun `test ansi colour is applied inside a window that does not start at zero`() {
+        val document = document(logText(300) + colouredLine(32) + "\n")
+        val highlighter = highlighterFor(document)
+        val line = document.lineCount - 2
+        assertTrue(
+            "the coloured line must sit past the first window",
+            line >= LogSmithLazyHighlighter.WINDOW_LINES,
+        )
+        val tokens = walkTyped(highlighter.createIterator(document.getLineStartOffset(line)), document.textLength)
+
+        assertEquals("the sequences must still be recognised", 2, tokens.count { it.type == LogSmithTokenTypes.ANSI_ESCAPE })
+        val error = tokens.first { it.type == LogSmithTokenTypes.LEVEL_ERROR }
+        assertEquals("the log's own colour wins over the ramp", Color(0x00CD00), error.attributes.foregroundColor)
     }
 }

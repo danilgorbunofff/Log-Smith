@@ -124,8 +124,13 @@ object AnsiText {
     }
 
     /** Ranges of [text] occupied by escape sequences — used to render them invisible. */
-    fun escapeRanges(text: CharSequence): List<IntRange> {
-        val stripped = stripWithMap(text)
+    fun escapeRanges(text: CharSequence): List<IntRange> = escapeRanges(stripWithMap(text))
+
+    /**
+     * Ranges of the ORIGINAL text occupied by escape sequences, given its already stripped
+     * form — the segmenter needs the [Stripped] anyway and must not strip the line twice.
+     */
+    fun escapeRanges(stripped: Stripped): List<IntRange> {
         val ranges = ArrayList<IntRange>(4)
         var prev = -1
         for (k in 0..stripped.text.length) {

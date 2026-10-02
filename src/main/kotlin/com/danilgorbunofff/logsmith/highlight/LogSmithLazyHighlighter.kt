@@ -1,5 +1,7 @@
 package com.danilgorbunofff.logsmith.highlight
 
+import com.danilgorbunofff.logsmith.ansi.AnsiStyle
+import com.danilgorbunofff.logsmith.ansi.AnsiText
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.HighlighterColors
 import com.intellij.openapi.editor.colors.EditorColorsScheme
@@ -35,6 +37,12 @@ import java.awt.Font
  * JSON blob pasted into a log cannot hang a paint. The same rule drops an over-long line
  * from the tail of an otherwise normal window.
  *
+ * ANSI (charter §5.6 R9): a window that contains an escape sequence gets one [AnsiText.runs]
+ * pass over its flat copy, and each token inside a styled run paints with that style instead
+ * of the level ramp — the ramp is untouched outside runs. A window without escapes allocates
+ * nothing for this. The escapes themselves are tokens too, and paint no ink at all, because
+ * the raw bytes have to stay in the document (see [AnsiAttributes.escape]).
+ *
  * Threading: [createIterator] and [documentChanged] run on the EDT (the platform's paint
  * and document paths), which is what makes the plain [HashMap] attribute memo and the
  * window cache safe; the cache itself is guarded by its own lock so a stray off-EDT read
@@ -50,7 +58,9 @@ class LogSmithLazyHighlighter(
     private var text: CharSequence = ""
     private var colorScheme: EditorColorsScheme = scheme
     private var plainAttributes: TextAttributes = plainAttributes(scheme)
+    private var escapeAttributes: TextAttributes = escapeAttributes(scheme)
     private val attributesByType = HashMap<IElementType, TextAttributes>()
+    private val ansiByStyle = HashMap<IElementType?, HashMap<AnsiStyle, TextAttributes>>()
     private val windows = LinkedHashMap<Int, WindowTokens>(MAX_CACHED_WINDOWS, 0.75f, true)
 
     override fun setText(text: CharSequence) {
@@ -68,7 +78,9 @@ class LogSmithLazyHighlighter(
     override fun setColorScheme(scheme: EditorColorsScheme) {
         colorScheme = scheme
         plainAttributes = plainAttributes(scheme)
+        escapeAttributes = escapeAttributes(scheme)
         attributesByType.clear()
+        ansiByStyle.clear()
         invalidateAll()
     }
 
@@ -112,6 +124,16 @@ class LogSmithLazyHighlighter(
         attributesByType[type] = attributes
         return attributes
     }
+
+    /**
+     * ANSI wins inside its run and the level ramp applies unchanged outside one (charter Day 9
+     * step 2). Both dimensions are small — a handful of token types, a handful of styles per log
+     * — so merged attributes are memoised rather than rebuilt for every painted token.
+     */
+    private fun ansiAttributes(type: IElementType?, base: TextAttributes, style: AnsiStyle): TextAttributes =
+        ansiByStyle.getOrPut(type) { HashMap() }.getOrPut(style) {
+            AnsiAttributes.of(style, colorScheme, base)
+        }
 
     private fun windowForLine(line: Int): WindowTokens {
         val doc = document
@@ -173,11 +195,38 @@ class LogSmithLazyHighlighter(
             lexer.advance()
         }
         if (broken || accumulator.size == 0 || expected != windowText.length) return plainWindow(start, end)
-        return WindowTokens(start, end, accumulator.ends(), accumulator.types())
+        val ends = accumulator.ends()
+        return WindowTokens(start, end, ends, accumulator.types(), ansiStyles(windowText, ends, start))
+    }
+
+    /**
+     * ANSI style per token, or null when the window holds no escape sequence at all — the
+     * overwhelmingly common case, and the one that must cost nothing (charter §5.6 R9). Runs
+     * and tokens both ascend, so one merge pass over each decides every token; a token that
+     * falls inside no run keeps the ramp. [ends] are document offsets while [AnsiText.runs]
+     * counts from the start of the window, so the runs are rebased by [start].
+     */
+    private fun ansiStyles(windowText: String, ends: IntArray, start: Int): Array<AnsiStyle?>? {
+        if (!AnsiText.containsEscape(windowText)) return null
+        val runs = AnsiText.runs(windowText)
+        if (runs.isEmpty()) return null
+        val styles = arrayOfNulls<AnsiStyle>(ends.size)
+        var runIndex = 0
+        var tokenStart = 0
+        for (index in ends.indices) {
+            val tokenEnd = ends[index]
+            while (runIndex < runs.size && runs[runIndex].end + start <= tokenStart) runIndex++
+            val run = runs.getOrNull(runIndex)
+            if (run != null && run.start + start < tokenEnd && run.end + start > tokenStart) {
+                styles[index] = run.style
+            }
+            tokenStart = tokenEnd
+        }
+        return styles
     }
 
     private fun plainWindow(start: Int, end: Int): WindowTokens =
-        WindowTokens(start, end, intArrayOf(end), arrayOf(LogSmithTokenTypes.GENERIC))
+        WindowTokens(start, end, intArrayOf(end), arrayOf(LogSmithTokenTypes.GENERIC), null)
 
     private fun lineStartOrLength(doc: Document, line: Int): Int =
         if (line >= doc.lineCount) doc.textLength else doc.getLineStartOffset(line)
@@ -190,6 +239,7 @@ class LogSmithLazyHighlighter(
         val end: Int,
         private val ends: IntArray,
         private val types: Array<IElementType?>,
+        private val styles: Array<AnsiStyle?>?,
     ) {
         val size: Int get() = ends.size
 
@@ -198,6 +248,9 @@ class LogSmithLazyHighlighter(
         fun endAt(index: Int): Int = ends[index]
 
         fun typeAt(index: Int): IElementType? = types[index]
+
+        /** The ANSI style covering this token, or null when there is none to apply. */
+        fun styleAt(index: Int): AnsiStyle? = styles?.get(index)
 
         /** Index of the token containing [offset]; the last token when [offset] is past the window. */
         fun indexOfToken(offset: Int): Int {
@@ -257,7 +310,11 @@ class LogSmithLazyHighlighter(
         override fun getTextAttributes(): TextAttributes {
             if (atEnd()) return plainAttributes
             val current = chain[windowIndex]
-            return attributesFor(current.typeAt(tokenIndex))
+            val type = current.typeAt(tokenIndex)
+            if (type == LogSmithTokenTypes.ANSI_ESCAPE) return escapeAttributes
+            val base = attributesFor(type)
+            val style = current.styleAt(tokenIndex) ?: return base
+            return ansiAttributes(type, base, style)
         }
 
         override fun getStart(): Int {
@@ -345,5 +402,8 @@ class LogSmithLazyHighlighter(
         private fun plainAttributes(scheme: EditorColorsScheme): TextAttributes =
             scheme.getAttributes(HighlighterColors.TEXT)
                 ?: TextAttributes(scheme.defaultForeground, null, null, null, Font.PLAIN)
+
+        /** The escape sequences keep their columns but must show no ink: [AnsiAttributes.escape]. */
+        private fun escapeAttributes(scheme: EditorColorsScheme): TextAttributes = AnsiAttributes.escape(scheme)
     }
 }

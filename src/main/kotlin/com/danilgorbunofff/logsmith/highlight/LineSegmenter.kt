@@ -1,5 +1,7 @@
 package com.danilgorbunofff.logsmith.highlight
 
+import com.danilgorbunofff.logsmith.ansi.AnsiText
+import com.danilgorbunofff.logsmith.ansi.Stripped
 import com.danilgorbunofff.logsmith.sniff.LogFormatSniffer
 import com.intellij.psi.tree.IElementType
 import java.util.regex.Pattern
@@ -18,6 +20,12 @@ data class Span(val type: IElementType, val start: Int, val end: Int) {
  * default look except where a level word appears. Everything it cannot
  * explain is emitted as one GENERIC span — i.e. default colouring, which is
  * the charter's "never make things worse" guarantee (§5.4).
+ *
+ * Coloured output (charter §5.6 R9) is classified as the text the user actually
+ * sees: the escapes are stripped first, exactly as detection strips them, and the
+ * spans are then mapped back onto the raw line with the escape ranges re-inserted
+ * as [LogSmithTokenTypes.ANSI_ESCAPE]. A coloured Logback line therefore gets the
+ * same ramp as an uncoloured one, and the escapes stay out of every other token.
  */
 class LineSegmenter(private val sniffer: LogFormatSniffer?) {
 
@@ -29,9 +37,50 @@ class LineSegmenter(private val sniffer: LogFormatSniffer?) {
         val text = line.toString()
         if (sniffer == null) return listOf(Span(LogSmithTokenTypes.GENERIC, 0, text.length))
         if (text.isEmpty()) return emptyList()
+        if (!AnsiText.containsEscape(text)) return classify(text)
+        val stripped = AnsiText.stripWithMap(text)
+        return withEscapes(stripped, classify(stripped.text))
+    }
+
+    /** The spans an escape-free line earns; [text] is what the sniffer is asked to read. */
+    private fun classify(text: String): List<Span> {
+        if (text.isEmpty()) return emptyList()
+        val sniffer = this.sniffer ?: return listOf(Span(LogSmithTokenTypes.GENERIC, 0, text.length))
         if (sniffer.matches(text)) return recordSpans(text)
         if (sniffer.matchesContinuation(text)) return continuationSpans(text)
         return listOf(Span(LogSmithTokenTypes.GENERIC, 0, text.length))
+    }
+
+    /**
+     * Puts the escape sequences back: each becomes one [LogSmithTokenTypes.ANSI_ESCAPE] span, and
+     * a span the stripped text earned is cut where an escape interrupts it. The result covers the
+     * raw line exactly, in ascending order, with no empty span — what the lexer requires.
+     */
+    private fun withEscapes(stripped: Stripped, spans: List<Span>): List<Span> {
+        val escapes = AnsiText.escapeRanges(stripped)
+        val result = ArrayList<Span>(spans.size + escapes.size)
+        var next = 0
+        var pos = 0
+        for (span in spans) {
+            val end = stripped.rawOffset(span.end)
+            while (pos < end) {
+                val escape = escapes.getOrNull(next)
+                if (escape != null && escape.first <= pos) {
+                    result += Span(LogSmithTokenTypes.ANSI_ESCAPE, escape.first, escape.last + 1)
+                    pos = escape.last + 1
+                    next++
+                } else {
+                    val stop = if (escape == null) end else minOf(end, escape.first)
+                    result += Span(span.type, pos, stop)
+                    pos = stop
+                }
+            }
+        }
+        while (next < escapes.size) {
+            result += Span(LogSmithTokenTypes.ANSI_ESCAPE, escapes[next].first, escapes[next].last + 1)
+            next++
+        }
+        return result
     }
 
     private fun recordSpans(text: String): List<Span> {
