@@ -1,11 +1,15 @@
 package com.danilgorbunofff.logsmith.sniff
 
+import com.danilgorbunofff.logsmith.ansi.AnsiText
+
 /**
  * Pure scanner that scores every sniffer over a line stream and picks the
  * winner: the highest share of explained lines (record or continuation),
  * ties broken by sniffer priority. Blank lines never count. A sniffer must
  * match at least one *record* line to win — continuation patterns alone
- * (e.g. "any indented line") never claim a file. No platform imports — this
+ * (e.g. "any indented line") never claim a file. Lines are normalized before
+ * scoring: a trailing `\r` is trimmed and ANSI escapes are stripped, so every
+ * sniffer sees the same escape-free text. No platform imports — this
  * is the part the unit tests cover directly.
  */
 class FormatScorer(sniffers: List<LogFormatSniffer>) {
@@ -19,7 +23,12 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
     private var capNote: String? = null
 
     fun onLine(rawLine: String) {
-        val line = rawLine.trimEnd('\r')
+        val trimmed = rawLine.trimEnd('\r')
+        // Sniffers must be ANSI-blind: colour codes land *inside* tokens (a Spring Boot
+        // console pattern emits `<ESC>[32m INFO <ESC>[0m`), and no pattern matches through
+        // them, so a coloured log would be mis-claimed or reported as no format at all.
+        // Detection strips here; highlighting re-reads the raw text and styles the escapes.
+        val line = if (AnsiText.containsEscape(trimmed)) AnsiText.strip(trimmed) else trimmed
         if (line.isBlank()) return
         scanned++
         for (index in ordered.indices) {

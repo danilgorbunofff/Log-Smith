@@ -1,5 +1,6 @@
 package com.danilgorbunofff.logsmith.sniff
 
+import com.danilgorbunofff.logsmith.ansi.AnsiText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -42,7 +43,54 @@ class LogScannerTest {
         val result = scan(File("testdata/docker.log").readBytes())
         assertTrue(result.result is DetectionResult.NoMatch)
         assertEquals(7, (result.result as DetectionResult.NoMatch).scanned)
+        // Its `docker-compose | ` prefix matches no charter format, with or without the
+        // escapes — stripping must not fabricate a match out of a coloured line.
+        assertNull((result.result as DetectionResult.NoMatch).closest)
         assertTrue(result.complete)
+    }
+
+    // ------------------------------------------------------------ ansi
+
+    /** `sgr("32m")` → `ESC[32m`; the caller supplies the final byte. */
+    private fun sgr(params: String) = "${AnsiText.ESC}[$params"
+
+    @Test
+    fun `a coloured logback record is detected, not reported as no format`() {
+        // The Spring Boot console pattern colours the level token itself, so the escape sits
+        // between the timestamp and the level: no pattern matches through it.
+        val coloured =
+            "2026-10-01 09:00:00.001 ${sgr("32m")} INFO ${sgr("0m")} 12345 --- [main] c.e.App : Started"
+        val stats = matched(scan("$coloured\n$coloured\n"))
+        assertEquals("Logback / Log4j 2", stats.formatName)
+        assertEquals(2, stats.matched)
+        assertEquals(2, stats.scanned)
+        assertEquals("100.0%", stats.percentText)
+    }
+
+    @Test
+    fun `256-colour and truecolour escapes leave no residue behind`() {
+        val coloured = "2026-10-01 09:00:00.001 ${sgr("38;5;196m")}ERROR${sgr("0m")} " +
+            "${sgr("38;2;255;128;0m")}[main]${sgr("0m")} c.e.App - boom"
+        val stats = matched(scan("$coloured\n"))
+        assertEquals("Logback / Log4j 2", stats.formatName)
+        assertEquals(1, stats.matched)
+    }
+
+    @Test
+    fun `a coloured stack frame still counts as explained`() {
+        val text = "2026-10-01 09:00:00.001 ${sgr("31m")}ERROR${sgr("0m")} [main] c.e.App - boom\n" +
+            "${sgr("2m")}\tat a.B.c(B.java:1)${sgr("0m")}\n"
+        val stats = matched(scan(text))
+        assertEquals(2, stats.matched)
+        assertEquals(2, stats.scanned)
+        assertEquals("100.0%", stats.percentText)
+    }
+
+    @Test
+    fun `a line made only of escapes is not a scanned line`() {
+        val stats = matched(scan("${sgr("0m")}\n$record\n"))
+        assertEquals(1, stats.scanned)
+        assertEquals(1, stats.matched)
     }
 
     // ------------------------------------------------------------ decoding

@@ -83,41 +83,44 @@ object AnsiText {
         return mergeAdjacent(runs)
     }
 
-    /** Removes every escape sequence from [text]. */
-    fun strip(text: CharSequence): String = stripWithMap(text).text
+    /**
+     * Removes every escape sequence from [text]. Escape-free input is returned untouched —
+     * detection calls this once per line, and almost no line carries an escape.
+     */
+    fun strip(text: CharSequence): String {
+        if (!containsEscape(text)) return text.toString()
+        val out = StringBuilder(text.length)
+        stripInto(text, out, null)
+        return out.toString()
+    }
 
     /** Removes escape sequences and maps every kept character (and the end) to its original offset. */
     fun stripWithMap(text: CharSequence): Stripped {
         val n = text.length
         val out = StringBuilder(n)
-        var i = 0
-        while (i < n) {
-            if (text[i] == ESC) {
-                val next = sequenceEnd(text, i, null)
-                i = if (next > i) next else i + 1
-                continue
-            }
-            out.append(text[i])
-            i++
-        }
-        return buildStripped(text, out)
+        val raw = IntArray(n + 1)
+        val kept = stripInto(text, out, raw)
+        raw[kept] = n
+        return Stripped(out.toString(), raw.copyOf(kept + 1))
     }
 
-    private fun buildStripped(text: CharSequence, out: StringBuilder): Stripped {
-        val raw = IntArray(out.length + 1)
-        var i = 0
-        var kept = 0
+    /** One stripping pass, recording the original offset of each kept character into [raw] when given. */
+    private fun stripInto(text: CharSequence, out: StringBuilder, raw: IntArray?): Int {
         val n = text.length
+        var kept = 0
+        var i = 0
         while (i < n) {
             if (text[i] == ESC) {
                 val next = sequenceEnd(text, i, null)
                 i = if (next > i) next else i + 1
                 continue
             }
-            raw[kept++] = i++
+            if (raw != null) raw[kept] = i
+            out.append(text[i])
+            kept++
+            i++
         }
-        raw[kept] = n
-        return Stripped(out.toString(), raw)
+        return kept
     }
 
     /** Ranges of [text] occupied by escape sequences — used to render them invisible. */
