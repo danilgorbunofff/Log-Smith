@@ -44,6 +44,7 @@ class LogSmithEditorAttacher : FileEditorManagerListener {
                 if (fileEditor.editor.getUserData(LogSmithEditorSession.SESSION_KEY) != null) continue
                 val session = LogSmithEditorSession(manager.project, file, fileEditor)
                 if (!Disposer.tryRegister(fileEditor, session)) continue
+                manager.addTopComponent(fileEditor, session.filterBar.root)
                 manager.addBottomComponent(fileEditor, session.strip.root)
                 session.start()
                 attached += session

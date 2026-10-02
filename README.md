@@ -74,9 +74,23 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   loading and JIT — 88–174 ms worst — and the IDE has long since done that by the time a user
   scrolls. `-Plogsmith.perf=true` gates the two perf tests, and CI runs them weekly with the
   ~500 MB fixture (§8.1).
+- **Day 8 done: filters and navigation (§5.3 R11/R12).** Filtering never edits the document —
+  it folds. A filter bar at the top of the editor offers one checkbox per detected level plus
+  a free-text field (400 ms debounce), and a Reset button. Non-matching record lines collapse
+  into `… N hidden` folds whose stack frames stay attached to the matching record that owns
+  them. Two new keyboard actions walk the error records: `F2` jumps to the next `ERROR` and
+  `Shift+F2` to the previous one, both wrapping around the file; a jump lands with the caret
+  centred and any fold covering it expanded. Typing in the document re-filters on the EDT
+  (never inside a write action), and the status line reports `filter hides N of M lines`.
+  Filter classification runs once per document snapshot on a background thread (64 MB cap),
+  is cached on the file, and is invalidated by any edit. Ctrl+click on a stack frame —
+  `path/file.kt:42`, `at org.example.Thing.java:42` or Python's `File "src/app.py", line 10`
+  — opens the referenced file at the line, resolving the path relative to the log's directory
+  first (build-tree layout) and then by bare name across the project; holding Ctrl underlines
+  the frame, so ordinary selection and copying stay untouched.
 - **Compatibility:** `verifyPlugin` reports *Compatible* for IC-252, IU-253, IU-261, IU-262
   and the IU-263 EAP. The only finding is the deprecated `createTextAttributesKey` noted below.
-- **Tests:** 117, all green. They include platform tests (`BasePlatformTestCase`) for:
+- **Tests:** 151, all green. They include platform tests (`BasePlatformTestCase`) for:
   - the real attach path
   - R4: the file stays writable, and can be typed into and saved, after LogSmith attaches
   - the toggle action
@@ -84,6 +98,9 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   - lazy window highlighting, checked token-by-token against the platform's own
     `LexerEditorHighlighter`
   - the line-index service: EDT delivery, the size cap, and disposal
+  - the filter service: fold planning, fact caching and invalidation on edit
+  - the filter through the session: folds applied and cleared, notes, re-filtering on edit,
+    the F2/Shift+F2 error walk, and stack-frame resolution
 
   Pure tests cover every sniffer, the scorer, the scanner (BOM, UTF-16, CRLF, caps), the line
   index (chunk-size equivalence, CRLF, caps, cancellation), the status wording, and the §7.2

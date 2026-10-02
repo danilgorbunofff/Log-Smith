@@ -16,6 +16,7 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
             result: DetectionResult?,
             disabled: Boolean,
             lineIndex: LogSmithLineIndexService.Outcome? = null,
+            filterNote: String? = null,
         ): StatusText {
             val base = when (result) {
                 null -> StatusText(
@@ -45,6 +46,7 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
             val notes = buildList {
                 if (disabled) add("highlighting disabled for this file")
                 lineIndex?.let { add(lineNote(it)) }
+                filterNote?.let { add(it) }
             }
             if (notes.isEmpty()) return base
             return base.copy(

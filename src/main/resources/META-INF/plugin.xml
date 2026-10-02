@@ -13,6 +13,20 @@ per file. The file stays a normal, fully editable text file.</description>
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
     </projectListeners>
     <actions>
+        <action id="LogSmith.GotoNextError"
+                class="com.danilgorbunofff.logsmith.LogSmithGotoNextErrorAction"
+                text="Go to Next Log Error"
+                description="Jump to the next ERROR record in this log, wrapping at the end">
+            <add-to-group group-id="EditorPopupMenu" anchor="before" relative-to-action="LogSmith.ToggleHighlight"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="F2"/>
+        </action>
+        <action id="LogSmith.GotoPrevError"
+                class="com.danilgorbunofff.logsmith.LogSmithGotoPrevErrorAction"
+                text="Go to Previous Log Error"
+                description="Jump to the previous ERROR record in this log, wrapping at the start">
+            <add-to-group group-id="EditorPopupMenu" anchor="before" relative-to-action="LogSmith.ToggleHighlight"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="shift F2"/>
+        </action>
         <action id="LogSmith.ToggleHighlight"
                 class="com.danilgorbunofff.logsmith.LogSmithToggleHighlightAction"
                 text="Disable LogSmith highlighting for this file"
