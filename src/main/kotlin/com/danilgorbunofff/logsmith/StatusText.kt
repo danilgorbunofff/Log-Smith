@@ -17,6 +17,7 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
             disabled: Boolean,
             lineIndex: LogSmithLineIndexService.Outcome? = null,
             filterNote: String? = null,
+            tailNote: String? = null,
         ): StatusText {
             val base = when (result) {
                 null -> StatusText(
@@ -46,6 +47,8 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
             val notes = buildList {
                 if (disabled) add("highlighting disabled for this file")
                 lineIndex?.let { add(lineNote(it)) }
+                // Right after the count: it is the reason that count has stopped moving.
+                tailNote?.let { add(it) }
                 filterNote?.let { add(it) }
             }
             if (notes.isEmpty()) return base

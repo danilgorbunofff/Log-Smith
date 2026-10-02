@@ -98,4 +98,31 @@ class StatusTextTest {
         )
         assertTrue(s.text.endsWith("— highlighting disabled for this file — 3 lines"))
     }
+
+    @Test
+    fun `a paused tail is stated next to the count it stopped moving`() {
+        val withTail = StatusText.of(
+            DetectionResult.Matched(logback),
+            disabled = false,
+            lineIndex = StatusText.indexOf("a\nb\n"),
+            filterNote = "filter hides 1 of 3 lines",
+            tailNote = "live tail paused: unsaved changes",
+        )
+        assertEquals(
+            "Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%) — 3 lines" +
+                " — live tail paused: unsaved changes — filter hides 1 of 3 lines",
+            withTail.text,
+        )
+        assertFalse("a paused tail is not a warning", withTail.warning)
+    }
+
+    @Test
+    fun `a running tail adds no note`() {
+        val quiet = StatusText.of(
+            DetectionResult.Matched(logback),
+            disabled = false,
+            lineIndex = StatusText.indexOf("a\nb\n"),
+        )
+        assertEquals("Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%) — 3 lines", quiet.text)
+    }
 }

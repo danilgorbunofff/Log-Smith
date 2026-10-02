@@ -65,6 +65,18 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
     /** The winner, or null when no candidate reaches [MIN_RATIO]. */
     fun best(): FormatStats? = bestCandidate()?.takeIf { it.ratio >= MIN_RATIO }
 
+    /**
+     * The counts of one registered sniffer, with no winner logic: no record line is required,
+     * so a caller that already knows the format — the live tail extending the counts of the
+     * format that won — can read them from a stream that claimed nothing on its own.
+     * Null when [sniffer] is not registered or nothing non-blank has been scored yet.
+     */
+    fun statsFor(sniffer: LogFormatSniffer): FormatStats? {
+        val index = ordered.indexOf(sniffer)
+        if (index < 0 || scanned == 0L) return null
+        return FormatStats(sniffer.formatName, explained[index].toInt(), scanned.toInt())
+    }
+
     /** The full outcome of this scan, including an honest "nothing matched". */
     fun result(): DetectionResult {
         val candidate = bestCandidate()
