@@ -3,8 +3,13 @@ package com.danilgorbunofff.logsmith.platform
 import com.danilgorbunofff.logsmith.LogSmithDetectionService
 import com.danilgorbunofff.logsmith.LogSmithEditorAttacher
 import com.danilgorbunofff.logsmith.LogSmithEditorSession
+import com.danilgorbunofff.logsmith.LogSmithLineIndexService
+import com.danilgorbunofff.logsmith.highlight.LogSmithLazyHighlighter
+import com.danilgorbunofff.logsmith.highlight.LogSmithTokenTypes
 import com.danilgorbunofff.logsmith.sniff.DetectionResult
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.editor.ex.util.LexerEditorHighlighter
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.PlatformTestUtil
@@ -20,6 +25,7 @@ class SessionLifecycleTest : BasePlatformTestCase() {
         LogSmithEditorAttacher.attachAll(FileEditorManager.getInstance(project), file)
         val session = myFixture.editor.getUserData(LogSmithEditorSession.SESSION_KEY)!!
         session.detection!!.awaitForTests()
+        session.indexJob?.awaitForTests()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
         return session
     }
@@ -33,12 +39,12 @@ class SessionLifecycleTest : BasePlatformTestCase() {
         assertTrue("toggle action must be visible in a LogSmith editor", shown.isEnabledAndVisible)
         assertEquals("Disable LogSmith highlighting for this file", shown.text)
         assertFalse(session.isHighlighting)
-        assertTrue(session.strip.text, session.strip.text.endsWith("highlighting disabled for this file"))
+        assertTrue(session.strip.text, session.strip.text.contains("highlighting disabled for this file"))
 
         // A late detection result must not paint over the disabled state.
         session.onResult(session.result!!)
         assertFalse(session.isHighlighting)
-        assertTrue(session.strip.text.endsWith("highlighting disabled for this file"))
+        assertTrue(session.strip.text, session.strip.text.contains("highlighting disabled for this file"))
 
         // testAction returns the presentation computed before performing: it offers "Enable".
         val again = myFixture.testAction(action)
@@ -78,5 +84,32 @@ class SessionLifecycleTest : BasePlatformTestCase() {
         Disposer.dispose(session)
         assertNull(editor.getUserData(LogSmithEditorSession.SESSION_KEY))
         assertTrue(session.detection!!.cancelled)
+    }
+
+    fun `test the installed highlighter is the lazy one and colours the file`() {
+        val session = attached("app.log", logback)
+        val editor = session.textEditor.editor
+        assertTrue("LogSmith installs its own highlighter, not the platform's whole-file one",
+            (editor as EditorEx).highlighter is LogSmithLazyHighlighter)
+        assertFalse("the platform must not keep a whole-file lexer highlighter for a .log",
+            editor.highlighter is LexerEditorHighlighter)
+
+        // The platform sets the editor and colour scheme on the highlighter it is given: if it
+        // did not, this iterator would have neither text nor attributes to work with.
+        val iterator = editor.highlighter.createIterator(0)
+        assertEquals(0, iterator.getStart())
+        assertEquals(LogSmithTokenTypes.TIMESTAMP, iterator.getTokenType())
+        assertNotNull("a coloured token must resolve to attributes", iterator.getTextAttributes())
+
+        val levelOffset = session.textEditor.editor.document.text.indexOf("INFO")
+        val atLevel = editor.highlighter.createIterator(levelOffset)
+        assertEquals(LogSmithTokenTypes.LEVEL_INFO, atLevel.getTokenType())
+    }
+
+    fun `test status line reports the indexed line count`() {
+        val session = attached("app.log", logback)
+        assertTrue(session.lineIndex is LogSmithLineIndexService.Outcome.Indexed)
+        assertEquals(51, (session.lineIndex as LogSmithLineIndexService.Outcome.Indexed).index.lineCount)
+        assertTrue(session.strip.text, session.strip.text.endsWith("— 51 lines"))
     }
 }

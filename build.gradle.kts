@@ -65,6 +65,15 @@ tasks {
     }
 
     /**
+     * §5.3 (R5): the heavy perf assertions — a 500 MB line index and the time-to-first-paint
+     * budget — only run when asked for, so the default suite stays fast and independent of
+     * the gitignored big.log fixture. CI drives them from the `perf` job in verify.yml.
+     */
+    test {
+        systemProperty("logsmith.perf", providers.gradleProperty("logsmith.perf").orElse("false").get())
+    }
+
+    /**
      * Cross-platform replacement for testdata/generate-test-files.ps1 (charter §7.2):
      * writes hibernate.log, docker.log and the ~400 MB big.log (gitignored). CRLF endings,
      * UTF-8 without BOM, same content as the PowerShell script. -PbigLogLines=0 skips big.log.

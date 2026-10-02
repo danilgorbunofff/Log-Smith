@@ -62,7 +62,7 @@ object LogScanner {
     }
 
     /** Detects and skips a UTF-8/UTF-16 byte-order mark; returns its charset, or null when absent. */
-    private fun consumeBom(stream: InputStream): Charset? {
+    internal fun consumeBom(stream: InputStream): Charset? {
         stream.mark(4)
         val b0 = stream.read()
         val b1 = stream.read()
@@ -83,14 +83,16 @@ object LogScanner {
 
     internal fun formatBytes(bytes: Long): String {
         val mb = 1024L * 1024
+        val gb = mb * 1024
         return when {
+            bytes >= gb && bytes % gb == 0L -> "${grouped(bytes / gb)} GB"
             bytes >= mb && bytes % mb == 0L -> "${grouped(bytes / mb)} MB"
             bytes >= 1024 -> "${grouped(bytes / 1024)} KB"
             else -> "${grouped(bytes)}-byte"
         }
     }
 
-    private fun grouped(value: Long): String = String.format(Locale.US, "%,d", value)
+    internal fun grouped(value: Long): String = String.format(Locale.US, "%,d", value)
 
     /**
      * Line reader with a hard per-line length cap. `\n` terminates a line; a trailing

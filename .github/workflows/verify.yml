@@ -28,3 +28,21 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew verifyPlugin
+  perf:
+    # §5.3 (R5): a ~500 MB log must index in one streaming pass and paint its first screen
+    # in under a second, with no EDT block over 50 ms. Too heavy for every push, so it rides
+    # the same weekly schedule as the compatibility job (§8.1).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew generateTestData -PbigLogLines=3700000
+      - run: ./gradlew test -Plogsmith.perf=true --tests '*PerfTest'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-reports
+          path: build/reports/tests/

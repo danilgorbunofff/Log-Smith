@@ -1,4 +1,4 @@
-# 400 MB adversarial perf-test file — regenerate with testdata/generate-test-files.ps1
+# ~500 MB adversarial perf-test file — regenerate with ./gradlew generateTestData
 testdata/big.log
 
 # JetBrains / Gradle

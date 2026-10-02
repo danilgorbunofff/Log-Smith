@@ -18,7 +18,7 @@ class LogSmithStatusStrip {
     }
 
     init {
-        render(StatusText.of(null, disabled = false, colouringNote = null))
+        render(StatusText.of(null, disabled = false))
     }
 
     val text: String get() = label.text

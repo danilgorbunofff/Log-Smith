@@ -44,22 +44,51 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   keep the editor's default look. Unrecognised lines and unmatched files keep the platform's
   rendering (§5.4). Typing re-lexes only the edited line, not the whole document. Right-click
   in a log editor and choose *Disable LogSmith highlighting for this file* to turn colouring
-  off without a restart; every open editor of that file follows the switch. Until lazy,
-  visible-range highlighting lands (Day 7), files over 5 MB are not coloured, and the status
-  line says so. Measured: a full lex costs about 19 ms/MB on the EDT (5 MB ≈ 100 ms,
-  20 MB ≈ 380 ms on Apple Silicon).
+  off without a restart; every open editor of that file follows the switch.
+- **Day 7 done: indexing and performance (§5.3 R5).** The 5 MB size cap is gone, and nothing
+  ever lexes a whole file. Two pieces replace the old whole-document highlighter:
+  - `LineOffsetIndex` streams the file once in 4 MB chunks, keeping only a growable `long[]`
+    of line starts (16 bytes per line, capped at 16M lines) — no text is retained, so memory
+    does not scale with file size. It runs on a background thread and reports progress.
+  - `LogSmithLazyHighlighter` lexes **windows**: at most 256 lines or 512 KB, whichever comes
+    first, built on demand for what is on screen and cached (12 windows, LRU). Windows are
+    lexed from a flat copy of the range, which measured ~5× faster than lexing the document's
+    rope directly. A line over 64 KB is never segmented, so a pasted minified blob cannot hang
+    a paint. Every window is validated for contiguous, complete token coverage and degrades to
+    plain text rather than corrupting the paint.
+
+  Measured on this machine with `./gradlew test -Plogsmith.perf=true --tests '*PerfTest'`
+  against the CI fixture (`generateTestData -PbigLogLines=3700000`, 500 MB):
+
+  | Measurement | Budget (§5.3 R5) | Measured |
+  |---|---|---|
+  | Index a 500 MB log (5,087,501 lines) | — | 3.8–4.3 s, 117–132 MB/s |
+  | Line index memory for that file | bounded by the index, not the file | 67 MB (13 % of 500 MB) |
+  | Time to first paint, 21 MB log (198,543 lines) | < 1 s | 178–266 ms |
+  | Window build while scrolling, 105 jumps | < 50 ms | median 6 ms, p90 11 ms, p99 22 ms, worst 32 ms |
+  | Sniffer calls for the first screen | ≤ 2 windows | 256 |
+
+  Ranges are the spread of four consecutive runs, not a best case. The scroll budget is
+  asserted on the worst of 105 jumps after a warm-up pass, and no jump in any run exceeded
+  50 ms (the worst observed across runs was 48 ms); the first builds of a cold JVM pay class
+  loading and JIT — 88–174 ms worst — and the IDE has long since done that by the time a user
+  scrolls. `-Plogsmith.perf=true` gates the two perf tests, and CI runs them weekly with the
+  ~500 MB fixture (§8.1).
 - **Compatibility:** `verifyPlugin` reports *Compatible* for IC-252, IU-253, IU-261, IU-262
   and the IU-263 EAP. The only finding is the deprecated `createTextAttributesKey` noted below.
-- **Tests:** 83, all green. They include platform tests (`BasePlatformTestCase`) for:
+- **Tests:** 117, all green. They include platform tests (`BasePlatformTestCase`) for:
   - the real attach path
   - R4: the file stays writable, and can be typed into and saved, after LogSmith attaches
   - the toggle action
   - cancellation on close
-  - incremental lexing
+  - lazy window highlighting, checked token-by-token against the platform's own
+    `LexerEditorHighlighter`
+  - the line-index service: EDT delivery, the size cap, and disposal
 
-  Pure tests cover every sniffer, the scorer, the scanner (BOM, UTF-16, CRLF, caps), the status
-  wording, and the §7.2 fixture files. Known deviation: `createTextAttributesKey(key, attrs)` is
-  deprecated but kept until the Day-10 settings page replaces it.
+  Pure tests cover every sniffer, the scorer, the scanner (BOM, UTF-16, CRLF, caps), the line
+  index (chunk-size equivalence, CRLF, caps, cancellation), the status wording, and the §7.2
+  fixture files. Known deviation: `createTextAttributesKey(key, attrs)` is deprecated but kept
+  until the Day-10 settings page replaces it.
 
 ## Building
 
@@ -85,8 +114,11 @@ Other tasks:
 - `./gradlew runIde` starts a sandbox IDE with the plugin installed.
 - `./gradlew verifyPlugin` checks binary compatibility against the recommended IDEs and the
   latest IntelliJ IDEA EAP. CI runs it weekly (§8.1).
-- `./gradlew generateTestData` regenerates the `testdata/` fixtures, including the 400 MB
-  `big.log`. Pass `-PbigLogLines=0` to skip `big.log`.
+- `./gradlew generateTestData` regenerates the `testdata/` fixtures. `big.log` is ~135 bytes a
+  record, so the default `-PbigLogLines=4200000` writes ~570 MB; CI uses
+  `-PbigLogLines=3700000` (~500 MB) for the perf job. Pass `-PbigLogLines=0` to skip `big.log`.
+- `./gradlew test -Plogsmith.perf=true --tests '*PerfTest'` runs the two gated perf tests
+  against whatever `big.log` is on disk. CI runs them weekly, on the schedule, not on push.
 
 ## Repo layout
 
@@ -96,5 +128,6 @@ Other tasks:
   is gitignored.
 - `src/main/kotlin/`: plugin sources:
   - `sniff/`: formats, scorer, scanner
-  - `highlight/`: lexer
+  - `index/`: the streaming line-offset index and the service that runs it
+  - `highlight/`: lexer, segmenter, lazy visible-range highlighter
   - top level: editor attach, status line, detection service
