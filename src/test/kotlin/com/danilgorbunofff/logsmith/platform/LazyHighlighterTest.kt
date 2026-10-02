@@ -13,10 +13,13 @@ import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.ex.util.LexerEditorHighlighter
 import com.intellij.openapi.editor.highlighter.HighlighterClient
 import com.intellij.openapi.editor.highlighter.HighlighterIterator
+import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.psi.tree.IElementType
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.Color
+import java.awt.Font
+import java.io.File
 
 /**
  * §5.3 (R5): visible-range highlighting. Nothing may lex more than a window of lines,
@@ -43,6 +46,16 @@ class LazyHighlighterTest : BasePlatformTestCase() {
     private fun countingSniffer(name: String = "Logback / Log4j 2"): CountingSniffer =
         sniffers.getOrPut(name) { CountingSniffer(BuiltinSniffers.byName.getValue(name)) }
 
+    /**
+     * A sniffer that claims nothing. The real captures are in no known format, so the platform tests over them
+     * exercise the ANSI layer alone — the ramp interaction is covered by the synthetic tests above.
+     */
+    private fun noFormatSniffer() = CountingSniffer(object : LogFormatSniffer {
+        override val formatName = "None"
+        override val priority = 0
+        override fun matches(line: String) = false
+    })
+
     private fun highlighterFor(
         document: Document,
         sniffer: CountingSniffer = countingSniffer(),
@@ -68,8 +81,8 @@ class LazyHighlighterTest : BasePlatformTestCase() {
         "2026-10-01 09:00:00.%03d [main] %-5s c.e.App - line $i".format(i % 1000, level)
     } + "\n"
 
-    /** One token of a walk: where it starts, its type, and the attributes the editor would paint it with. */
-    private class Token(val type: IElementType?, val start: Int, val attributes: TextAttributes)
+    /** One token of a walk: where it starts and ends, its type, and the attributes the editor would paint it with. */
+    private class Token(val type: IElementType?, val start: Int, val end: Int, val attributes: TextAttributes)
 
     /** Walks from [offset] to the end, asserting contiguity, and returns the tokens. */
     private fun walkTyped(iterator: HighlighterIterator, length: Int): List<Token> {
@@ -81,7 +94,7 @@ class LazyHighlighterTest : BasePlatformTestCase() {
             assertEquals("token must start where the previous ended", expected, start)
             assertTrue("token must advance", end >= start)
             assertTrue("token must stay inside the document", end <= length)
-            tokens.add(Token(iterator.getTokenType(), start, iterator.getTextAttributes()))
+            tokens.add(Token(iterator.getTokenType(), start, end, iterator.getTextAttributes()))
             if (start == length && end == length) break // the empty last line at EOF
             expected = end
             iterator.advance()
@@ -341,5 +354,70 @@ class LazyHighlighterTest : BasePlatformTestCase() {
         assertEquals("the sequences must still be recognised", 2, tokens.count { it.type == LogSmithTokenTypes.ANSI_ESCAPE })
         val error = tokens.first { it.type == LogSmithTokenTypes.LEVEL_ERROR }
         assertEquals("the log's own colour wins over the ramp", Color(0x00CD00), error.attributes.foregroundColor)
+    }
+
+    // ------------------------------------------------- real captures (charter Day 9 step 3)
+
+    private fun fixture(name: String): String {
+        val file = File("testdata/ansi/$name")
+        assertTrue("missing fixture ${file.path}", file.isFile)
+        return file.readText()
+    }
+
+    /** The attributes the editor would paint [word] with, for a word the capture contains once. */
+    private fun attributesOf(word: String, document: Document, tokens: List<Token>): TextAttributes {
+        val at = document.text.indexOf(word)
+        assertTrue("$word must be in the capture", at >= 0)
+        return tokens.first { at >= it.start && at < it.end }.attributes
+    }
+
+    fun `test the real docker capture paints the colours the log asked for`() {
+        val document = document(fixture("docker-logs.log"))
+        val tokens = walkTyped(highlighterFor(document, noFormatSniffer()).createIterator(0), document.textLength)
+
+        assertNull(
+            "no format is claimed, so the plain opening line gets no ramp colour",
+            attributesOf("waiting", document, tokens).foregroundColor,
+        )
+        assertEquals(
+            "direct colour is taken literally",
+            Color(255, 136, 0),
+            attributesOf("NOTICE", document, tokens).foregroundColor,
+        )
+        assertEquals(
+            "256-colour resolves through the xterm cube",
+            Color(255, 0, 0),
+            attributesOf("CRITICAL", document, tokens).foregroundColor,
+        )
+        assertEquals(
+            "a base colour plus bold",
+            Color(0xCDCD00),
+            attributesOf("WARN", document, tokens).foregroundColor,
+        )
+        assertEquals("bold must reach the font", Font.BOLD, attributesOf("WARN", document, tokens).fontType and Font.BOLD)
+        assertEquals(
+            "underline must reach the effect",
+            EffectType.LINE_UNDERSCORE,
+            attributesOf("DEPLOY", document, tokens).effectType,
+        )
+        val scheme = EditorColorsManager.getInstance().globalScheme
+        val escapes = tokens.filter { it.type == LogSmithTokenTypes.ANSI_ESCAPE }
+        assertEquals("every sequence in the capture is a token of its own", 16, escapes.size)
+        for (token in escapes) {
+            assertEquals("escapes paint no ink", scheme.defaultBackground, token.attributes.foregroundColor)
+        }
+    }
+
+    fun `test the real npm capture keeps its warning colours and its plain tail`() {
+        val document = document(fixture("npm-install.log"))
+        val tokens = walkTyped(highlighterFor(document, noFormatSniffer()).createIterator(0), document.textLength)
+
+        assertEquals(Color(0xCDCD00), attributesOf("warn", document, tokens).foregroundColor)
+        assertEquals(Color(0x5C5CFF), attributesOf("deprecated", document, tokens).foregroundColor)
+        assertEquals("bold must reach the font", Font.BOLD, attributesOf("npm", document, tokens).fontType and Font.BOLD)
+        assertNull(
+            "npm's own `39` must return the message to plain text",
+            attributesOf("har-validator", document, tokens).foregroundColor,
+        )
     }
 }

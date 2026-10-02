@@ -1,0 +1,50 @@
+[1m============================= test session starts =============================[0m
+platform win32 -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /home/ci/build
+[1mcollecting ... [0mcollected 7 items
+
+test_probe.py::test_addition [32mPASSED[0m[32m                                      [ 14%][0m
+test_probe.py::test_string_upper [32mPASSED[0m[32m                                  [ 28%][0m
+test_probe.py::test_parse_duration [32mPASSED[0m[32m                                [ 42%][0m
+test_probe.py::test_wrong_expectation [31mFAILED[0m[31m                             [ 57%][0m
+test_probe.py::test_missing_key [31mFAILED[0m[31m                                   [ 71%][0m
+test_probe.py::test_deprecation_warning [32mPASSED[0m[31m                           [ 85%][0m
+test_probe.py::test_broken_fixture [31mFAILED[0m[31m                                [100%][0m
+
+================================== FAILURES ===================================
+[31m[1m___________________________ test_wrong_expectation ____________________________[0m
+
+    [0m[94mdef[39;49;00m[90m [39;49;00m[92mtest_wrong_expectation[39;49;00m():[90m[39;49;00m
+>       [94massert[39;49;00m [94m2[39;49;00m + [94m2[39;49;00m == [94m5[39;49;00m, [33m"[39;49;00m[33marithmetic is broken[39;49;00m[33m"[39;49;00m[90m[39;49;00m
+[1m[31mE       AssertionError: arithmetic is broken[0m
+[1m[31mE       assert (2 + 2) == 5[0m
+
+[1m[31mtest_probe.py[0m:17: AssertionError
+[31m[1m______________________________ test_missing_key _______________________________[0m
+
+    [0m[94mdef[39;49;00m[90m [39;49;00m[92mtest_missing_key[39;49;00m():[90m[39;49;00m
+        data = {[33m"[39;49;00m[33mlevel[39;49;00m[33m"[39;49;00m: [33m"[39;49;00m[33mINFO[39;49;00m[33m"[39;49;00m}[90m[39;49;00m
+>       [94massert[39;49;00m data[[33m"[39;49;00m[33mtimestamp[39;49;00m[33m"[39;49;00m] == [33m"[39;49;00m[33m2026-10-01[39;49;00m[33m"[39;49;00m[90m[39;49;00m
+               ^^^^^^^^^^^^^^^^^[90m[39;49;00m
+[1m[31mE       KeyError: 'timestamp'[0m
+
+[1m[31mtest_probe.py[0m:22: KeyError
+[31m[1m_____________________________ test_broken_fixture _____________________________[0m
+
+    [0m[94mdef[39;49;00m[90m [39;49;00m[92mtest_broken_fixture[39;49;00m():[90m[39;49;00m
+>       [94mraise[39;49;00m [96mRuntimeError[39;49;00m([33m"[39;49;00m[33mfixture setup exploded[39;49;00m[33m"[39;49;00m)[90m[39;49;00m
+[1m[31mE       RuntimeError: fixture setup exploded[0m
+
+[1m[31mtest_probe.py[0m:31: RuntimeError
+[33m============================== warnings summary ===============================[0m
+test_probe.py::test_deprecation_warning
+  /usr/local/lib/python3.13/site-packages\_pytest\python.py:167: DeprecationWarning: legacy parser is deprecated
+    result = testfunction(**testargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+[36m[1m=========================== short test summary info ===========================[0m
+[31mFAILED[0m test_probe.py::[1mtest_wrong_expectation[0m - AssertionError: arithmetic is broken
+[31mFAILED[0m test_probe.py::[1mtest_missing_key[0m - KeyError: 'timestamp'
+[31mFAILED[0m test_probe.py::[1mtest_broken_fixture[0m - RuntimeError: fixture setup exploded
+[31m=================== [31m[1m3 failed[0m, [32m4 passed[0m, [33m1 warning[0m[31m in 0.36s[0m[31m ====================[0m

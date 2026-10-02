@@ -1,0 +1,10 @@
+waiting for dependencies...
+[1;32mINFO[0m  service started on port 8080
+[1;33mWARN[0m  retry 2/5 in 250ms
+[1;31mERROR[0m connection refused: postgres:5432
+[2mTRACE[0m cache lookup took 0.4ms
+[4mDEPLOY[0m rollout complete in 12s
+[38;2;255;136;0mNOTICE[0m truecolour banner
+[38;5;196mCRITICAL[0m disk usage at 91%
+[34;47mBANNER[0m log-smith capture
+shutdown complete
