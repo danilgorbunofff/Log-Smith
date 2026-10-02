@@ -125,4 +125,44 @@ class StatusTextTest {
         )
         assertEquals("Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%) — 3 lines", quiet.text)
     }
+
+    @Test
+    fun `an uncapped index can be followed`() {
+        assertTrue(StatusText.tailFollows(StatusText.indexOf("a\nb\n")))
+    }
+
+    @Test
+    fun `an over-cap file cannot be followed`() {
+        val capped = LogSmithLineIndexService.Outcome.Indexed(
+            LineOffsetIndex(maxLines = 2).apply { accept("a\nb\nc\n") },
+        )
+        assertFalse("a capped index stops growing", StatusText.tailFollows(capped))
+        assertFalse(
+            "a file over the byte cap has no index at all",
+            StatusText.tailFollows(LogSmithLineIndexService.Outcome.TooLarge(2L shl 30)),
+        )
+        assertFalse(
+            "an unreadable file has no index at all",
+            StatusText.tailFollows(LogSmithLineIndexService.Outcome.Failed("Permission denied")),
+        )
+    }
+
+    @Test
+    fun `an unfollowable file states the limit instead of a stalled count`() {
+        val capped = LogSmithLineIndexService.Outcome.Indexed(
+            LineOffsetIndex(maxLines = 2).apply { accept("a\nb\nc\n") },
+        )
+        val s = StatusText.of(
+            DetectionResult.Matched(logback),
+            disabled = false,
+            lineIndex = capped,
+            tailNote = StatusText.TAIL_UNAVAILABLE_NOTE,
+        )
+        assertEquals(
+            "Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%)" +
+                " — 2+ lines (line index capped) — live tail unavailable — reopen to refresh",
+            s.text,
+        )
+        assertFalse("a stated limit is not a warning", s.warning)
+    }
 }

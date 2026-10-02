@@ -81,6 +81,22 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
         internal fun indexOf(text: String): LogSmithLineIndexService.Outcome =
             LogSmithLineIndexService.Outcome.Indexed(LineOffsetIndex().apply { accept(text) })
 
+        /**
+         * True when appended text can extend the index for [outcome] (charter §8 Day 9 step 5).
+         * A file that was never indexed, or whose index stopped at the line cap, cannot be
+         * followed; the strip says so rather than leaving a stalled count unexplained.
+         */
+        internal fun tailFollows(outcome: LogSmithLineIndexService.Outcome): Boolean = when (outcome) {
+            is LogSmithLineIndexService.Outcome.Indexed -> !outcome.index.capped
+            is LogSmithLineIndexService.Outcome.TooLarge, is LogSmithLineIndexService.Outcome.Failed -> false
+        }
+
+        /**
+         * Shown when a file cannot be followed at all. The limit is stated instead of failing
+         * silently, and LogSmith never re-checks by itself: only reopening does.
+         */
+        internal const val TAIL_UNAVAILABLE_NOTE = "live tail unavailable — reopen to refresh"
+
         private fun group(value: Int): String = String.format(Locale.US, "%,d", value)
     }
 }

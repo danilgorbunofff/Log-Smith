@@ -3,7 +3,9 @@ package com.danilgorbunofff.logsmith.platform
 import com.danilgorbunofff.logsmith.LogSmithEditorAttacher
 import com.danilgorbunofff.logsmith.LogSmithEditorSession
 import com.danilgorbunofff.logsmith.LogSmithLineIndexService
+import com.danilgorbunofff.logsmith.StatusText
 import com.danilgorbunofff.logsmith.highlight.LogSmithTokenTypes
+import com.danilgorbunofff.logsmith.index.LineOffsetIndex
 import com.danilgorbunofff.logsmith.sniff.DetectionResult
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -145,6 +147,25 @@ class LiveTailTest : BasePlatformTestCase() {
             20,
             editor.document.getLineNumber(editor.caretModel.offset),
         )
+    }
+
+    fun `test an over-cap file states the tail limit instead of stalling silently`() {
+        val session = attach("overcap.log", head)
+
+        // The real cap is 16 M lines, so the capped outcome is handed to the session directly:
+        // this is the state a file past the cap reaches, and it has to say so in the strip.
+        session.onIndexed(
+            LogSmithLineIndexService.Outcome.Indexed(LineOffsetIndex(maxLines = 2).apply { accept(head) }),
+        )
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertTrue(session.strip.text, session.strip.text.contains("(line index capped)"))
+        assertTrue(
+            session.strip.text,
+            session.strip.text.endsWith("— ${StatusText.TAIL_UNAVAILABLE_NOTE}"),
+        )
+        val label = session.strip.root.components.first() as JLabel
+        assertNull("a stated limit is not a warning", label.icon)
     }
 
     fun `test a clean append after an edit rebuilds and reports the whole file`() {

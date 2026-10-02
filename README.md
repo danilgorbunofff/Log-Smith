@@ -72,7 +72,7 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   asserted on the worst of 105 jumps after a warm-up pass, and no jump in any run exceeded
   50 ms (the worst observed across runs was 48 ms); the first builds of a cold JVM pay class
   loading and JIT — 88–174 ms worst — and the IDE has long since done that by the time a user
-  scrolls. `-Plogsmith.perf=true` gates the two perf tests, and CI runs them weekly with the
+  scrolls. `-Plogsmith.perf=true` gates the three perf tests, and CI runs them weekly with the
   ~500 MB fixture (§8.1).
 - **Day 8 done: filters and navigation (§5.3 R11/R12).** Filtering never edits the document —
   it folds. A filter bar at the top of the editor offers one checkbox per detected level plus
@@ -88,9 +88,37 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   — opens the referenced file at the line, resolving the path relative to the log's directory
   first (build-tree layout) and then by bare name across the project; holding Ctrl underlines
   the frame, so ordinary selection and copying stay untouched.
+- **Day 9 done: colour ANSI and follow a growing file (§5.3 R9, §5.4).** Output from
+  `docker logs`, `npm install`, `pytest` and anything else that keeps its colours arrives full
+  of escape sequences, and LogSmith parses them instead of printing them. A pure `AnsiText`
+  parser turns SGR sequences into styled runs — 16-colour, 256-colour and truecolour foreground
+  and background, plus bold, dim, italic and underline — and strips everything else (cursor
+  movement, OSC titles), so an escape can never appear as `←[32m` garbage. Inside an ANSI span
+  the sequence's own colour wins over the level ramp; outside one the ramp is unchanged, and a
+  file detection did not claim still gets no colour at all. Detection runs **ANSI-blind**:
+  sequences are stripped before a line is scanned, so an escape cannot disguise a level or flip
+  a format.
+  A growing file now follows itself. When a program appends to an open log the line count in the
+  status line grows, folds keep applying, F2 walks into the appended errors, and the new lines
+  are classified with the format already detected — no re-sniff, no re-read of the old lines,
+  and the offset index grows by the appended lines only. The tail is **document-anchored**: it
+  consumes the text the platform itself loads when the file changes on disk, so there is no
+  second reader that could disagree with the editor about encoding or byte offsets, and no
+  background thread whose results could arrive out of order. Anything the tail cannot follow
+  says so — `live tail unavailable — reopen to refresh`, on top of the existing `line index
+  capped` / `file too large` note — instead of quietly showing stale text.
+
+  Measured with `./gradlew test -Plogsmith.perf=true --tests '*LiveTailPerfTest'` against a
+  200,000-line / 12 MB document: appending 1,000 lines costs LogSmith **2.8 ms** — the index
+  append plus the detection statistics over the new text — against a 50 ms budget. The
+  end-to-end window for that append is 1,320 ms, and it is the platform's own document reload
+  rather than the tail: with the tail switched off the identical append costs 950 ms, and the
+  run-to-run spread on that reload (775–1,320 ms for the same work) is wider than the plugin's
+  entire share.
+
 - **Compatibility:** `verifyPlugin` reports *Compatible* for IC-252, IU-253, IU-261, IU-262
   and the IU-263 EAP. The only finding is the deprecated `createTextAttributesKey` noted below.
-- **Tests:** 151, all green. They include platform tests (`BasePlatformTestCase`) for:
+- **Tests:** 237, all green. They include platform tests (`BasePlatformTestCase`) for:
   - the real attach path
   - R4: the file stays writable, and can be typed into and saved, after LogSmith attaches
   - the toggle action
@@ -101,11 +129,18 @@ specified up front in [`docs/charter.md`](docs/charter.md) (§-references in `do
   - the filter service: fold planning, fact caching and invalidation on edit
   - the filter through the session: folds applied and cleared, notes, re-filtering on edit,
     the F2/Shift+F2 error walk, and stack-frame resolution
+  - ANSI on the real captured Docker / npm / pytest samples, checked token-by-token against the
+    platform's own highlighter colours
+  - the live tail: an append growing the index, the colours and the line count; a split line
+    counted once; an edit pausing the tail with no warning icon; F2 reaching an appended
+    `ERROR`; the clean rebuild after an edit; and the over-cap degrade message
 
   Pure tests cover every sniffer, the scorer, the scanner (BOM, UTF-16, CRLF, caps), the line
-  index (chunk-size equivalence, CRLF, caps, cancellation), the status wording, and the §7.2
-  fixture files. Known deviation: `createTextAttributesKey(key, attrs)` is deprecated but kept
-  until the Day-10 settings page replaces it.
+  index (chunk-size equivalence, CRLF, caps, cancellation), the status wording, the ANSI parser
+  (16/256/truecolour, attributes, stripped non-SGR sequences, malformed input), the tail
+  classifier (append, split line, edit, truncation, restart) and the §7.2 fixture files. Known
+  deviation: `createTextAttributesKey(key, attrs)` is deprecated but kept until the Day-10
+  settings page replaces it.
 
 ## Building
 
@@ -134,7 +169,7 @@ Other tasks:
 - `./gradlew generateTestData` regenerates the `testdata/` fixtures. `big.log` is ~135 bytes a
   record, so the default `-PbigLogLines=4200000` writes ~570 MB; CI uses
   `-PbigLogLines=3700000` (~500 MB) for the perf job. Pass `-PbigLogLines=0` to skip `big.log`.
-- `./gradlew test -Plogsmith.perf=true --tests '*PerfTest'` runs the two gated perf tests
+- `./gradlew test -Plogsmith.perf=true --tests '*PerfTest'` runs the three gated perf tests
   against whatever `big.log` is on disk. CI runs them weekly, on the schedule, not on push.
 
 ## Repo layout
@@ -145,6 +180,9 @@ Other tasks:
   is gitignored.
 - `src/main/kotlin/`: plugin sources:
   - `sniff/`: formats, scorer, scanner
+  - `ansi/`: the pure SGR parser
   - `index/`: the streaming line-offset index and the service that runs it
   - `highlight/`: lexer, segmenter, lazy visible-range highlighter
-  - top level: editor attach, status line, detection service
+  - `live/`: the tail growth classifier that follows appended lines
+  - `filter/`: the fold plan, the level/text matcher, the error navigator, stack frames
+  - top level: editor attach, status line, detection service, per-editor session

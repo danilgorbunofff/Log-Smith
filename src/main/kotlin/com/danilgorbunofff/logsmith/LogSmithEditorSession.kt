@@ -157,10 +157,10 @@ class LogSmithEditorSession(
     internal fun onIndexed(outcome: LogSmithLineIndexService.Outcome) {
         lineIndex = outcome
         val index = indexedIndex()
-        tailNote = null
         covered = coveredFrom(index?.scannedChars)
         // No index, a capped one, or offsets beyond what an Int can address: nothing to follow.
-        tailOff = index == null || index.capped || covered < 0
+        tailOff = !StatusText.tailFollows(outcome) || covered < 0
+        tailNote = if (tailOff) StatusText.TAIL_UNAVAILABLE_NOTE else null
         if (!tailOff) catchUp()
         refresh()
     }
@@ -185,10 +185,12 @@ class LogSmithEditorSession(
         if (from < 0 || from >= to || to > text.length) return
         index.accept(text, from, to)
         if (index.capped) {
-            // The status line already says "N+ lines (line index capped)"; counting further
-            // would only make a number the index can no longer support look exact.
+            // The status line already says "N+ lines (line index capped)"; the tail note says
+            // the count will not move again, and counting further lines would only make a
+            // number the index can no longer support look exact.
             tailOff = true
             covered = -1
+            tailNote = StatusText.TAIL_UNAVAILABLE_NOTE
             refreshLater()
             return
         }
