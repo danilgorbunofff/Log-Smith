@@ -22,6 +22,21 @@ class StatusTextTest {
     }
 
     @Test
+    fun `an unclaimed coloured file says it shows ANSI colours only`() {
+        val status = StatusText.of(DetectionResult.NoMatch(null, 7, ansiLines = 7), disabled = false)
+        assertEquals("Format: no format matched 7 lines — showing ANSI colours only", status.text)
+        assertTrue("no format matched is still a warning", status.warning)
+    }
+
+    @Test
+    fun `a log too large for a text editor states the limit`() {
+        val status = StatusText.tooLargeForEditor(20L shl 20)
+        assertTrue(status.text, status.text.startsWith("LogSmith is off for this file: it is over the IDE's 20 MB text-editor limit"))
+        assertTrue(status.tooltip, status.tooltip.contains("idea.max.content.load.filesize"))
+        assertFalse("a stated limit is not a warning", status.warning)
+    }
+
+    @Test
     fun `matched state shows ratio`() {
         val s = StatusText.of(DetectionResult.Matched(logback), disabled = false, lineIndex = null)
         assertEquals("Format: Logback / Log4j 2 — matched 1,204 / 1,208 lines (99.7%)", s.text)
@@ -79,7 +94,7 @@ class StatusTextTest {
     @Test
     fun `unindexed file says why`() {
         val over = StatusText.of(DetectionResult.Matched(logback), disabled = false, lineIndex = LogSmithLineIndexService.Outcome.TooLarge(2L shl 30))
-        assertTrue(over.text.endsWith("— not indexed: file is over 1 GB"))
+        assertTrue(over.text.endsWith("— not indexed: file is over 1 G characters"))
 
         val failed = StatusText.of(
             DetectionResult.Matched(logback),

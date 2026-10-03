@@ -2,6 +2,7 @@ package com.danilgorbunofff.logsmith
 
 import com.danilgorbunofff.logsmith.filter.ErrorNavigator
 import com.danilgorbunofff.logsmith.filter.FilterState
+import com.danilgorbunofff.logsmith.filter.LogLineFacts
 import com.danilgorbunofff.logsmith.filter.LogSmithFilterBar
 import com.danilgorbunofff.logsmith.filter.LogSmithFilterService
 import com.danilgorbunofff.logsmith.filter.LogSmithStackFrameLink
@@ -11,6 +12,7 @@ import com.danilgorbunofff.logsmith.live.TailGrowth
 import com.danilgorbunofff.logsmith.live.mergeResult
 import com.danilgorbunofff.logsmith.sniff.BuiltinSniffers
 import com.danilgorbunofff.logsmith.sniff.DetectionResult
+import com.intellij.codeInsight.hint.HintManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
@@ -73,6 +75,15 @@ class LogSmithEditorSession(
 
     internal val foldRegions = ArrayList<FoldRegion>()
 
+    /** A re-filter for document changes is already queued; further changes ride on it. */
+    private var refilterQueued = false
+
+    /**
+     * The last facts the filter produced, kept only while every document change since has been a
+     * pure append: the next plan then classifies just the appended lines instead of the file.
+     */
+    private var appendBase: LogSmithFilterService.LineFacts? = null
+
     /**
      * Characters of the document the line index and the tail have consumed, or -1 while no
      * prefix is trusted. Only ever assigned from the index's own [LineOffsetIndex.scannedChars]
@@ -92,6 +103,13 @@ class LogSmithEditorSession(
     /** True while no trusted prefix is being followed, so a document change cannot grow anything. */
     private var tailOff: Boolean = true
 
+    /**
+     * Set when the document changed in some way other than a pure append while the line index
+     * was still being built from an earlier snapshot. The snapshot's prefix is then no longer
+     * the document's prefix, so the finished index cannot simply be caught up.
+     */
+    private var rewrittenWhileIndexing: Boolean = false
+
     private val frameLink = LogSmithStackFrameLink()
 
     val filterBar = LogSmithFilterBar { applyFilter(it) }
@@ -110,7 +128,14 @@ class LogSmithEditorSession(
         refresh()
         attachListeners()
         detection = project.getService(LogSmithDetectionService::class.java).detect(file, this, ::onResult)
-        indexJob = project.getService(LogSmithLineIndexService::class.java).index(file, this, ::onIndexed)
+        startIndex()
+    }
+
+    /** Indexes the document as it is now; changes from here on are judged against this snapshot. */
+    private fun startIndex() {
+        rewrittenWhileIndexing = false
+        indexJob = project.getService(LogSmithLineIndexService::class.java)
+            .index(editorDocument.immutableCharSequence, this, ::onIndexed)
     }
 
     /**
@@ -135,10 +160,23 @@ class LogSmithEditorSession(
                         is TailGrowth.Appended -> grow(growth.from, growth.to)
                         TailGrowth.Untrusted -> onUntrustedChange()
                     }
+                } else if (!isDisposed && lineIndex == null) {
+                    // The index is still building from an older snapshot: an append is caught up
+                    // when it lands, anything else means the snapshot's prefix has moved.
+                    val append = event.oldLength == 0 && event.offset + event.newLength == event.document.textLength
+                    if (!append) rewrittenWhileIndexing = true
                 }
-                if (filter.isDefault) return
+                if (!(event.oldLength == 0 && event.offset + event.newLength == event.document.textLength)) {
+                    appendBase = null
+                }
+                if (filter.isDefault || refilterQueued) return
+                // A burst of changes — a program logging fast — is answered by one re-filter.
+                refilterQueued = true
                 ApplicationManager.getApplication().invokeLater(
-                    { if (!isDisposed && !filter.isDefault) applyFilter(filter) },
+                    {
+                        refilterQueued = false
+                        if (!isDisposed && !filter.isDefault) applyFilter(filter)
+                    },
                     ModalityState.defaultModalityState(),
                 ) { isDisposed }
             }
@@ -161,7 +199,9 @@ class LogSmithEditorSession(
         // No index, a capped one, or offsets beyond what an Int can address: nothing to follow.
         tailOff = !StatusText.tailFollows(outcome) || covered < 0
         tailNote = if (tailOff) StatusText.TAIL_UNAVAILABLE_NOTE else null
-        if (!tailOff) catchUp()
+        if (!tailOff) {
+            if (rewrittenWhileIndexing) onUntrustedChange() else catchUp()
+        }
         refresh()
     }
 
@@ -241,7 +281,7 @@ class LogSmithEditorSession(
         indexJob?.dispose()
         detection?.dispose()
         detection = project.getService(LogSmithDetectionService::class.java).detect(file, this, ::onResult)
-        indexJob = project.getService(LogSmithLineIndexService::class.java).index(file, this, ::onIndexed)
+        startIndex()
         refreshLater()
     }
 
@@ -274,31 +314,44 @@ class LogSmithEditorSession(
         strip.render(StatusText.of(result, isDisabled, lineIndex, lastFilterNote, tailNote))
     }
 
-    /** Applies a filter from the bar (or a document change): folds stay cleared until the plan returns. */
+    /**
+     * Applies a filter from the bar (or a document change). The current folds stay in place until
+     * the new plan replaces them — fold regions follow the text they cover, so they stay correct
+     * meanwhile — rather than expanding the whole file for the moment the plan takes, which on a
+     * live log meant the view jumped on every append.
+     */
     internal fun applyFilter(state: FilterState) {
         if (isDisposed) return
         filter = state
-        lastFilterNote = null
         filterJob?.dispose()
         filterJob = null
-        clearFolds()
-        if (!state.isDefault) {
-            filterJob = project.getService(LogSmithFilterService::class.java).plan(file, textEditor.editor, state) { job, outcome ->
-                onFilterOutcome(job, outcome)
-            }
+        if (state.isDefault) {
+            lastFilterNote = null
+            clearFolds()
+        } else {
+            filterJob = project.getService(LogSmithFilterService::class.java)
+                .plan(file, textEditor.editor, state, claimedSniffer(), appendBase) { job, outcome -> onFilterOutcome(job, outcome) }
         }
         refresh()
     }
+
+    /** The format detection claimed, which decides what a record is; null when nothing was claimed. */
+    private fun claimedSniffer() =
+        (result as? DetectionResult.Matched)?.stats?.formatName?.let { BuiltinSniffers.byName[it] }
 
     internal fun onFilterOutcome(job: LogSmithFilterService.Job, outcome: LogSmithFilterService.Outcome) {
         if (filterJob !== job || job.cancelled) return
         filterJob = null
         when (outcome) {
             is LogSmithFilterService.Outcome.Folded -> {
+                if (outcome.facts.documentStamp == textEditor.editor.document.modificationStamp) appendBase = outcome.facts
                 lastFilterNote = "filter hides %,d of %,d lines".format(Locale.US, outcome.hiddenLines, outcome.facts.lineCount)
                 applyFolds(outcome)
             }
-            is LogSmithFilterService.Outcome.Failed -> lastFilterNote = "filter could not be applied: ${outcome.reason}"
+            is LogSmithFilterService.Outcome.Failed -> {
+                lastFilterNote = "filter could not be applied: ${outcome.reason}"
+                clearFolds()
+            }
         }
         refresh()
     }
@@ -316,7 +369,9 @@ class LogSmithEditorSession(
             foldRegions.clear()
             for (run in outcome.plan) {
                 val start = starts[run.firstLine]
-                val end = if (run.lastLine + 1 < starts.size) starts[run.lastLine + 1] else document.textLength
+                // End before the newline of the last hidden line: that newline stays visible, so
+                // the placeholder gets a line of its own and the next record starts on the next.
+                val end = if (run.lastLine + 1 < starts.size) starts[run.lastLine + 1] - 1 else document.textLength
                 if (start >= end) continue
                 val region = editor.foldingModel.addFoldRegion(
                     start, end, "… ${"%,d".format(Locale.US, run.lineCount)} hidden",
@@ -341,15 +396,29 @@ class LogSmithEditorSession(
     internal fun gotoError(forward: Boolean) {
         if (isDisposed) return
         val editor = textEditor.editor
-        LogSmithFilterService.cachedFacts(file, editor.document)?.let { facts ->
+        if (editor.document.textLength > LogSmithFilterService.MAX_FILTER_BYTES) {
+            hint("LogSmith error navigation is off for files over 64 MB")
+            return
+        }
+        val sniffer = claimedSniffer()
+        LogSmithFilterService.cachedFacts(file, editor.document, sniffer)?.let { facts ->
             moveToError(facts, forward)
             return
         }
         factsJob?.dispose()
-        val job = project.getService(LogSmithFilterService::class.java).ensureFacts(file, editor) { j, facts ->
+        val job = project.getService(LogSmithFilterService::class.java).ensureFacts(file, editor, sniffer) { j, facts ->
             if (factsJob === j) moveToError(facts, forward)
         }
         factsJob = job
+    }
+
+    /** Last message shown by [hint]; kept so the never-silent paths are testable headless. */
+    internal var lastHint: String? = null
+        private set
+
+    private fun hint(message: String) {
+        lastHint = message
+        HintManager.getInstance().showInformationHint(textEditor.editor, message)
     }
 
     private fun moveToError(facts: LogSmithFilterService.LineFacts, forward: Boolean) {
@@ -358,7 +427,11 @@ class LogSmithEditorSession(
         val document = editor.document
         if (facts.documentStamp != document.modificationStamp) return
         val from = document.getLineNumber(editor.caretModel.offset)
-        val target = ErrorNavigator.next(facts.bytes, from, forward) ?: return
+        val target = ErrorNavigator.next(facts.bytes, from, forward)
+        if (target == null) {
+            hint(if (facts.bytes.any { LogLineFacts.isError(it) }) "This is the only ERROR record in this log" else "No ERROR records in this log")
+            return
+        }
         val offset = document.getLineStartOffset(target)
         editor.caretModel.moveToOffset(offset)
         editor.scrollingModel.scrollToCaret(ScrollType.CENTER)

@@ -8,7 +8,6 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutorService
@@ -16,16 +15,19 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 /**
- * Builds the [LineOffsetIndex] for one file off the EDT, once per open file.
+ * Builds the [LineOffsetIndex] for one open document off the EDT.
  *
- * Charter §5.3 (R5): line offsets are the only per-file structure the plugin keeps, so a
- * 500 MB log costs its line count, not its size. The index is read in chunks and can be
- * cancelled at any moment; the outcome — including "file too large" and "unreadable" — is
- * posted on the EDT and ends up in the status line, never silently.
+ * Charter §5.3 (R5): line offsets are the only per-file structure the plugin keeps, so the
+ * index costs the line count, not the text. It is built from the editor's own document
+ * snapshot rather than from the bytes on disk: the document has already normalized line
+ * separators (`\r\n` becomes `\n`), dropped the BOM and applied the charset, so the index and
+ * the live tail — which consumes document changes — share one coordinate space. Built from
+ * the disk bytes, a CRLF file indexed longer than its document, and the tail took that for a
+ * rewrite on every rebuild. The outcome — including "too large" — is posted on the EDT and
+ * ends up in the status line, never silently.
  *
- * The service is a project service with a single-worker pool: indexing a 500 MB file must
- * not compete with the detection scans that make the format appear instantly, and two
- * simultaneous index builds would only fight for the same disk.
+ * The service is a project service with a single-worker pool: two simultaneous index builds
+ * would only fight each other, and the detection scans keep their own pools.
  */
 @Service(Service.Level.PROJECT)
 class LogSmithLineIndexService : Disposable {
@@ -33,19 +35,19 @@ class LogSmithLineIndexService : Disposable {
     private val executor: ExecutorService =
         AppExecutorUtil.createBoundedApplicationPoolExecutor("LogSmith line-index", 1)
 
-    /** What the line index ended up being for one file; [Indexed] is the success case. */
+    /** What the line index ended up being for one document; [Indexed] is the success case. */
     sealed interface Outcome {
-        /** [index] holds the line starts of the indexed prefix of the file. */
+        /** [index] holds the line starts of the indexed snapshot, in document offsets. */
         class Indexed(val index: LineOffsetIndex) : Outcome
 
-        /** The file is bigger than LogSmith is willing to index; [bytes] is its size. */
-        data class TooLarge(val bytes: Long) : Outcome
+        /** The document is longer than LogSmith is willing to index; [length] is its size in characters. */
+        data class TooLarge(val length: Long) : Outcome
 
-        /** The file could not be read; [reason] is the message the platform gave us. */
+        /** Indexing failed; [reason] is the message of the failure. */
         data class Failed(val reason: String) : Outcome
     }
 
-    /** Handle for one file's index build; disposed together with its parent. */
+    /** Handle for one index build; disposed together with its parent. */
     class Job internal constructor() : Disposable {
 
         @Volatile
@@ -71,14 +73,17 @@ class LogSmithLineIndexService : Disposable {
         }
     }
 
-    /** Indexes [file] and reports the outcome on the EDT unless [parent] was disposed. */
-    fun index(file: VirtualFile, parent: Disposable, onDone: (Outcome) -> Unit): Job =
-        index(file, parent, MAX_INDEX_BYTES, LineOffsetIndex.DEFAULT_MAX_LINES, onDone)
+    /**
+     * Indexes [text] — an immutable document snapshot, e.g. `Document.immutableCharSequence` —
+     * and reports the outcome on the EDT unless [parent] was disposed.
+     */
+    fun index(text: CharSequence, parent: Disposable, onDone: (Outcome) -> Unit): Job =
+        index(text, parent, MAX_INDEX_CHARS, LineOffsetIndex.DEFAULT_MAX_LINES, onDone)
 
     internal fun index(
-        file: VirtualFile,
+        text: CharSequence,
         parent: Disposable,
-        maxBytes: Long,
+        maxChars: Long,
         maxLines: Int,
         onDone: (Outcome) -> Unit,
     ): Job {
@@ -87,28 +92,19 @@ class LogSmithLineIndexService : Disposable {
             job.dispose()
             return job
         }
-        val size = runCatching { file.length }.getOrDefault(0L)
-        if (size > maxBytes) {
-            post(job, Outcome.TooLarge(size), onDone)
+        if (text.length > maxChars) {
+            post(job, Outcome.TooLarge(text.length.toLong()), onDone)
             return job
         }
         job.future = executor.submit {
             val outcome = try {
-                file.inputStream.use { stream ->
-                    val index = LineOffsetIndex.build(
-                        input = stream,
-                        fallback = file.charset,
-                        maxLines = maxLines,
-                        isCancelled = { job.cancelled },
-                    )
-                    Outcome.Indexed(index)
-                }
+                Outcome.Indexed(LineOffsetIndex.build(text, maxLines = maxLines, isCancelled = { job.cancelled }))
             } catch (e: CancellationException) {
                 null
             } catch (e: ProcessCanceledException) {
                 throw e
             } catch (e: Exception) {
-                thisLogger().warn("LogSmith could not index ${file.presentableUrl}", e)
+                thisLogger().warn("LogSmith could not index a document", e)
                 Outcome.Failed(e.message ?: e.javaClass.simpleName)
             }
             if (outcome != null) post(job, outcome, onDone)
@@ -129,7 +125,7 @@ class LogSmithLineIndexService : Disposable {
     }
 
     companion object {
-        /** 1 GiB: past this the offsets alone stop being worth their memory (charter §5.3). */
-        internal const val MAX_INDEX_BYTES = 1L shl 30
+        /** 1 G characters: past this the offsets alone stop being worth their memory (charter §5.3). */
+        internal const val MAX_INDEX_CHARS = 1L shl 30
     }
 }

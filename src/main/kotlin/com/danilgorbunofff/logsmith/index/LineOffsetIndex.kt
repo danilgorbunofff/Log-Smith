@@ -137,6 +137,33 @@ class LineOffsetIndex(private val maxLines: Int = DEFAULT_MAX_LINES) {
         }
 
         /**
+         * Builds an index over an in-memory text — the editor's document snapshot — scanning
+         * [chunkChars] at a time so cancellation stays prompt. This is the form the plugin uses:
+         * the index then lives in the document's own coordinates (line separators already
+         * normalized, BOM already dropped), so appended text extends it exactly.
+         */
+        fun build(
+            text: CharSequence,
+            chunkChars: Int = CHUNK_CHARS,
+            maxLines: Int = DEFAULT_MAX_LINES,
+            isCancelled: () -> Boolean = { false },
+            onProgress: (Long) -> Unit = {},
+        ): LineOffsetIndex {
+            require(chunkChars > 0) { "chunkChars must be positive" }
+            val index = LineOffsetIndex(maxLines)
+            var from = 0
+            while (from < text.length) {
+                if (isCancelled()) throw CancellationException("line index build cancelled")
+                val to = minOf(text.length, from + chunkChars)
+                index.accept(text, from, to)
+                onProgress(index.scannedChars)
+                if (index.capped) break
+                from = to
+            }
+            return index
+        }
+
+        /**
          * Builds an index from raw bytes, decoding with the BOM's charset when present and
          * [fallback] otherwise — the same rule [LogScanner] applies, so the line count and the
          * detected format always describe the same text.

@@ -12,6 +12,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.io.File
@@ -45,10 +46,17 @@ class LiveTailTest : BasePlatformTestCase() {
         }
     }
 
-    /** A real directory on disk: an appending process writes outside the VFS, so the file must exist. */
+    /**
+     * A real directory on disk: an appending process writes outside the VFS, so the file must exist.
+     * The VFS resolves symlinks (macOS `/var` → `/private/var`), so the canonical path is the one
+     * the test framework has to allow.
+     */
     private fun tempDir(): File =
         if (this::dir.isInitialized) dir
-        else Files.createTempDirectory("logsmith-live-tail").toFile().also { dir = it }
+        else Files.createTempDirectory("logsmith-live-tail").toFile().also {
+            dir = it
+            VfsRootAccess.allowRootAccess(testRootDisposable, it.path, it.canonicalPath)
+        }
 
     private fun attach(name: String, text: String): LogSmithEditorSession {
         val real = File(tempDir(), name)
@@ -102,6 +110,26 @@ class LiveTailTest : BasePlatformTestCase() {
         assertTrue("the appended line is not in the document", appended > 0)
         val iterator = (session.textEditor.editor as EditorEx).highlighter.createIterator(appended)
         assertEquals(LogSmithTokenTypes.TIMESTAMP, iterator.getTokenType())
+    }
+
+    fun `test a CRLF log indexes once and follows appends`() {
+        // On disk every line ends in \r\n; the document holds \n only. The index must describe
+        // the document, or every CRLF file looks rewritten and is re-detected forever.
+        val session = attach("crlf.log", head.replace("\n", "\r\n"))
+        val job = session.indexJob
+        repeat(3) { settle(session) }
+        assertSame("a CRLF file must be indexed once and then stay put", job, session.indexJob)
+        assertEquals(21, lines(session))
+        assertEquals(20, stats(session).matched)
+        assertTrue(session.strip.text, session.isHighlighting)
+
+        append(session, record(21) + "\r\n")
+        settle(session)
+
+        assertSame("an append must extend the index, not rebuild it", job, session.indexJob)
+        assertEquals(22, lines(session))
+        assertEquals(21, stats(session).matched)
+        assertTrue(session.strip.text, session.strip.text.endsWith("— 22 lines"))
     }
 
     fun `test a line split across two writes is counted once`() {

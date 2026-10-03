@@ -8,6 +8,9 @@ fallback, colours timestamps, threads and levels (ERROR red, WARN amber, DEBUG d
 making rendering worse, says so plainly when no format matches, and lets you switch colouring off
 per file. The file stays a normal, fully editable text file.</description>
     <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <actionPromoter implementation="com.danilgorbunofff.logsmith.LogSmithActionPromoter"/>
+    </extensions>
     <projectListeners>
         <listener class="com.danilgorbunofff.logsmith.LogSmithEditorAttacher"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>

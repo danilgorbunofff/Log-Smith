@@ -20,5 +20,7 @@ execute them.
 | Day 13 — the listing and the packaging | [`day-13-listing-packaging.md`](day-13-listing-packaging.md) | ⬜ |
 | Day 14 — publish, then distribution | [`day-14-publish-distribution.md`](day-14-publish-distribution.md) | ⬜ |
 
-**Current test count: 237, all green.** Every phase ends with `.\gradlew.bat test` passing and
+**Current test count: 273, all green.** A verification pass on 2026-10-03 reproduced and fixed
+twelve defects behind the Day 1–9 checkmarks (see the README's "Verification pass" entry); each
+has a regression test. Every phase ends with `.\gradlew.bat test` passing and
 a commit pushed to `main`.

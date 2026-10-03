@@ -15,15 +15,19 @@ import com.intellij.openapi.vfs.VirtualFile
 val logSmithHighlightDisabled: Key<Boolean> = Key.create("LOGSMITH_HIGHLIGHT_DISABLED")
 
 /**
- * Swaps the platform highlighter for the LogSmith one once detection has a confident
- * answer, and puts a freshly built platform highlighter back when detection fails or
- * the user disabled the file (charter §5.4, R6): highlighting is only ever an upgrade —
- * a file that rendered fine before LogSmith never turns grey.
+ * Puts LogSmith highlighting over the platform's own once detection has something to add, and
+ * puts a freshly built platform highlighter back when it has not or the user disabled the file
+ * (charter §5.4, R6): highlighting is only ever an upgrade — a file that rendered fine before
+ * LogSmith never turns grey.
  *
- * The installed highlighter is [LogSmithLazyHighlighter], not the platform's
- * `LexerEditorHighlighter`: it colours the visible range only, so installing it costs the
- * same for a 4 KB file and a 4 GB one and there is no file-size cap left to explain
- * (charter §5.3 R5, §8 Day 7).
+ * "Something to add" is either a claimed format (timestamps, threads and the level ramp) or, for
+ * a file no format explains, ANSI escape sequences in it (charter §5.6 R9): their colours are
+ * rendered and the escapes hidden, and nothing else is touched.
+ *
+ * The installed highlighter is [LogSmithLazyHighlighter], which colours the visible range only,
+ * and it keeps the highlighter the platform would have used for the file underneath: every
+ * character LogSmith does not colour keeps the platform's attributes (for `.log`, the bundled
+ * TextMate log grammar's strings, numbers and URLs), so installing LogSmith never removes colour.
  */
 class LogSmithHighlighterInstaller(
     private val project: Project,
@@ -31,29 +35,40 @@ class LogSmithHighlighterInstaller(
     private val file: VirtualFile,
 ) {
 
-    private var installedFormat: String? = null
+    /** The format name LogSmith highlights with, [ANSI_ONLY] for an unclaimed coloured file, or null. */
+    var installedMode: String? = null
+        private set
 
-    val isInstalled: Boolean get() = installedFormat != null
+    val isInstalled: Boolean get() = installedMode != null
 
-    /** Applies [result]: installs LogSmith highlighting on a match, restores otherwise. */
+    /** Applies [result]: installs LogSmith highlighting when it adds something, restores otherwise. */
     fun update(result: DetectionResult?, disabled: Boolean) {
-        val formatName = (result as? DetectionResult.Matched)?.stats?.formatName
-        val sniffer = formatName?.let { BuiltinSniffers.byName[it] }
-        if (disabled || sniffer == null) {
+        val sniffer = (result as? DetectionResult.Matched)?.stats?.formatName?.let { BuiltinSniffers.byName[it] }
+        val coloured = ((result as? DetectionResult.NoMatch)?.ansiLines ?: 0) > 0
+        if (disabled || (sniffer == null && !coloured)) {
             restore()
             return
         }
-        if (installedFormat == formatName) return
+        val mode = sniffer?.formatName ?: ANSI_ONLY
+        if (installedMode == mode) return
         editor.highlighter = LogSmithLazyHighlighter(
             LogSmithSyntaxHighlighter(LineSegmenter(sniffer)),
             editor.colorsScheme,
+            platformHighlighter(),
         )
-        installedFormat = formatName
+        installedMode = mode
     }
 
     private fun restore() {
-        if (installedFormat == null) return
-        editor.highlighter = EditorHighlighterFactory.getInstance().createEditorHighlighter(project, file)
-        installedFormat = null
+        if (installedMode == null) return
+        editor.highlighter = platformHighlighter()
+        installedMode = null
+    }
+
+    private fun platformHighlighter() = EditorHighlighterFactory.getInstance().createEditorHighlighter(project, file)
+
+    companion object {
+        /** The mode for a file no format claimed but which carries ANSI colour codes. */
+        const val ANSI_ONLY = "ANSI colours"
     }
 }

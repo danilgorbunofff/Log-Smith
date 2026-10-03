@@ -77,7 +77,8 @@ class SessionFilterTest : BasePlatformTestCase() {
         assertEquals(2, folds.size)
         val lower = folds.minBy { it.startOffset }
         val upper = folds.maxBy { it.startOffset }
-        assertEquals(document.getLineStartOffset(41), lower.endOffset)
+        // A fold ends before its last line's newline, so the next record keeps a line of its own.
+        assertEquals(document.getLineEndOffset(40), lower.endOffset)
         assertEquals(document.getLineStartOffset(42), upper.startOffset)
     }
 
@@ -88,7 +89,14 @@ class SessionFilterTest : BasePlatformTestCase() {
             val document = session.textEditor.editor.document
             document.insertString(document.textLength, "2026-10-01 09:00:00.999 [main] INFO  c.e.App - late\n")
         }
-        session.applyFilterAndWait(session.filter)
+        // The edit queues the session's own re-filter; wait for it rather than racing it with a
+        // second, manual one — whichever plan landed last used to decide the outcome.
+        var guard = 20
+        do {
+            pump()
+            session.filterJob?.awaitForTests()
+            pump()
+        } while (session.filterJob != null && guard-- > 0)
         assertTrue(session.strip.text, session.strip.text.contains("filter hides 52 of 52 lines"))
     }
 

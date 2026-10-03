@@ -10,6 +10,7 @@ import com.danilgorbunofff.logsmith.sniff.DetectionResult
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.io.File
@@ -114,6 +115,8 @@ class LiveTailPerfTest : BasePlatformTestCase() {
 
     private fun attach(name: String, text: String): LogSmithEditorSession {
         dir = Files.createTempDirectory("logsmith-tail-perf").toFile()
+        // The VFS resolves symlinks (macOS `/var` → `/private/var`); allow the canonical path too.
+        VfsRootAccess.allowRootAccess(testRootDisposable, dir.path, dir.canonicalPath)
         val real = File(dir, name)
         real.writeText(text)
         val file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(real.toPath())

@@ -125,6 +125,14 @@ class AnsiTextTest {
     }
 
     @Test
+    fun `ITU direct colour skips the colour-space id`() {
+        val expected = AnsiStyle(foreground = AnsiColor.Rgb(255, 0, 0))
+        assertEquals(expected, AnsiText.runs("${sgr("38:2::255:0:0m")}x")[0].style)
+        assertEquals(expected, AnsiText.runs("${sgr("38:2:0:255:0:0m")}x")[0].style)
+        assertEquals("the short colon form still works", expected, AnsiText.runs("${sgr("38:2:255:0:0m")}x")[0].style)
+    }
+
+    @Test
     fun `malformed extended colour drops the rest of the sequence`() {
         // `38;5` with no value: no partial style, sequence consumed.
         assertTrue(AnsiText.runs("${sgr("38;5")}x").isEmpty())

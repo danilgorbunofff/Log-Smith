@@ -202,7 +202,7 @@ object AnsiText {
             s.reset()
             return
         }
-        val params: CharSequence = if (raw.indexOf(':') < 0) raw else raw.toString().replace(':', ';')
+        val params: CharSequence = if (raw.indexOf(':') < 0) raw else colonsToSemicolons(raw)
         val n = params.length
         var j = 0
         while (j < n) {
@@ -235,6 +235,18 @@ object AnsiText {
             if (j < n && params[j] == ';') j++ else if (j < n) j = n
         }
     }
+
+    /**
+     * Rewrites `:` sub-parameters as `;` parameters. ITU T.416 direct colour is
+     * `38:2:<colour-space>:r:g:b`, where the colour-space id is usually empty (`38:2::r:g:b`);
+     * that id has no `;` counterpart, so it is dropped rather than read as the red channel.
+     */
+    private fun colonsToSemicolons(raw: CharSequence): String =
+        raw.split(';').joinToString(";") { group ->
+            val parts = group.split(':')
+            val direct = parts.size == 6 && (parts[0] == "38" || parts[0] == "48") && parts[1] == "2"
+            (if (direct) parts.filterIndexed { index, _ -> index != 2 } else parts).joinToString(";")
+        }
 
     /** Consumes `;5;n` / `;2;r;g;b` after a `38`/`48`; returns the index after the group, or the end when malformed. */
     private fun extendedColour(code: Int, params: CharSequence, sep: Int, s: MutableStyle): Int {

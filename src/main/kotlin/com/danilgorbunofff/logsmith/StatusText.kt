@@ -32,10 +32,16 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
                     warning = false,
                 )
                 is DetectionResult.NoMatch -> StatusText(
-                    "Format: no format matched ${result.scanned} lines — showing plain text" +
+                    "Format: no format matched ${result.scanned} lines — " +
+                        (if (result.ansiLines > 0) "showing ANSI colours only" else "showing plain text") +
                         (result.closest?.let { " (closest: ${it.formatName}, ${it.percentText})" } ?: ""),
-                    "LogSmith leaves files it cannot explain uncoloured" +
-                        (result.note?.let { " — $it" } ?: ""),
+                    (
+                        if (result.ansiLines > 0) {
+                            "No log format explains this file, so LogSmith only renders its ANSI colour codes"
+                        } else {
+                            "LogSmith leaves files it cannot explain uncoloured"
+                        }
+                        ) + (result.note?.let { " — $it" } ?: ""),
                     warning = true,
                 )
                 is DetectionResult.Failed -> StatusText(
@@ -72,10 +78,23 @@ data class StatusText(val text: String, val tooltip: String, val warning: Boolea
                 if (outcome.index.capped) "${group(outcome.index.lineCount)}+ lines (line index capped)"
                 else "${group(outcome.index.lineCount)} lines"
             is LogSmithLineIndexService.Outcome.TooLarge ->
-                "not indexed: file is over ${LogSmithLineIndexService.MAX_INDEX_BYTES / (1024L * 1024 * 1024)} GB"
+                "not indexed: file is over ${group((LogSmithLineIndexService.MAX_INDEX_CHARS / (1024L * 1024 * 1024)).toInt())} G characters"
             is LogSmithLineIndexService.Outcome.Failed ->
                 "line count unavailable: ${outcome.reason}"
         }
+
+        /**
+         * For a log the IDE would not load into a text editor (over `idea.max.content.load.filesize`,
+         * [limitBytes]): LogSmith cannot attach to it, and says so rather than staying invisible.
+         * A stated limit, not a warning.
+         */
+        fun tooLargeForEditor(limitBytes: Long): StatusText = StatusText(
+            "LogSmith is off for this file: it is over the IDE's ${group((limitBytes / (1024 * 1024)).toInt())} MB " +
+                "text-editor limit, so the IDE shows it without a text editor",
+            "Raise idea.max.content.load.filesize (Help → Edit Custom Properties…) and reopen the file " +
+                "to get a full editor, which LogSmith then attaches to.",
+            warning = false,
+        )
 
         /** Test hook: an index of [text], as if the file had been read. */
         internal fun indexOf(text: String): LogSmithLineIndexService.Outcome =

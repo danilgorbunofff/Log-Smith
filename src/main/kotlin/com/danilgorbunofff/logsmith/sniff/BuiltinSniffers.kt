@@ -16,7 +16,9 @@ object BuiltinSniffers {
 
     // Timestamp sub-patterns for the highlighter (match a record's date region,
     // either at offset 0 of a line or as the interior of a bracketed field).
-    private val TS_ISO = Pattern.compile("""\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?""")
+    /** ISO date-time with an optional fraction and an optional attached zone (`Z`, `+02:00`, `+0200`). */
+    private val ZONE = """(?:Z|[+-]\d{2}:?\d{2})"""
+    private val TS_ISO = Pattern.compile("""\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?""" + ZONE + "?")
     private val TS_ISO_TZ = Pattern.compile(TS_ISO.pattern() + """(?: [+-]\d{2}:\d{2})?""")
     private val TS_ISO_MID = Pattern.compile("""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?""")
     private val TS_JUL = Pattern.compile(MONTH + """ \d{1,2}, \d{4} \d{1,2}:\d{2}:\d{2} (?:AM|PM)""")
@@ -26,14 +28,19 @@ object BuiltinSniffers {
     private val TS_SQ = Pattern.compile("""\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?: [+-]\d{4})?""")
     private val TS_DJANGO = Pattern.compile("""\d{1,2}/""" + MONTH + """/\d{4} \d{2}:\d{2}:\d{2}""")
     private val TS_APACHE = Pattern.compile("""[A-Z][a-z]{2} """ + MONTH + """ \d{2} \d{2}:\d{2}:\d{2}\.\d{1,6} \d{4}""")
+    private val TS_MONOLOG = Pattern.compile("""\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?""" + ZONE + "?")
     private val TS_ACCESS = Pattern.compile("""\d{2}/""" + MONTH + """/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}""")
 
     private fun varargOf(vararg patterns: Pattern): Pattern =
         Pattern.compile(patterns.joinToString("|") { it.pattern() })
 
-    /** 1. Logback / Log4j 2 — timestamp, then level and optional [thread] in either order. */
+    /**
+     * 1. Logback / Log4j 2 — timestamp, then level and optional [thread] in either order. The
+     * timestamp may carry a zone: Spring Boot 3's default console layout is
+     * `2026-10-01T09:14:02.101+02:00  INFO 12345 --- [main] …`.
+     */
     private val logback = Pattern.compile(
-        """\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?\s+(?:\[[^\]]*\]\s+)?""" + LEVEL + """\b.*"""
+        """\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?""" + ZONE + """?\s+(?:\[[^\]]*\]\s+)?""" + LEVEL + """\b.*"""
     )
     /** JVM stack-trace lines: frames, causes, elided frames, and the exception header line. */
     private val JAVA_STACK =
@@ -69,14 +76,18 @@ object BuiltinSniffers {
             """|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}) """ + LEVEL + """ .*)"""
     )
 
-    /** 5. Structured JSON lines — level + msg + time keys must all be present. */
+    /**
+     * 5. Structured JSON lines — a level key and a message key must both be present. A time key
+     * is not required: winston's default JSON format has none. The level may be ECS's
+     * `log.level`; logstash-logback-encoder writes `level` with an `@timestamp`.
+     */
     private val structuredJson = Pattern.compile(
-        """\{(?=[^\n]*"level"\s*:)(?=[^\n]*"(?:msg|message|event)"\s*:)(?=[^\n]*"(?:time|timestamp|ts|ts_ms)"\s*:).*\}"""
+        """\{(?=[^\n]*"(?:log\.)?level"\s*:)(?=[^\n]*"(?:msg|message|event)"\s*:).*\}\s*"""
     )
 
-    /** 6. nginx / Apache combined access log. */
+    /** 6. nginx / Apache combined access log; the client is an IPv4 or IPv6 address, or a host name. */
     private val nginxAccess = Pattern.compile(
-        """(?:\d{1,3}\.){3}\d{1,3} \S+ \S+ \[[^\]]*\] "[^"]*" \d{3} (?:\d+|-).*"""
+        """\S+ \S+ \S+ \[[^\]]*\] "[^"]*" \d{3} (?:\d+|-).*"""
     )
 
     /** 7. nginx error log. */
@@ -90,9 +101,20 @@ object BuiltinSniffers {
             """(?:emerg|alert|crit|error|warn|notice|info|debug)\].*"""
     )
 
-    /** 9. PHP / Laravel via Monolog — `[date] channel.LEVEL: msg`. */
+    /**
+     * 9. PHP / Laravel via Monolog — `[date] channel.LEVEL: msg`. Laravel writes `Y-m-d H:i:s`;
+     * Monolog's own default is ISO 8601 with microseconds and a zone.
+     */
     private val monolog = Pattern.compile(
-        """\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] [\w.-]+\.""" + LEVEL + """: .*"""
+        """\[""" + TS_MONOLOG.pattern() + """\] [\w.-]+\.""" + LEVEL + """: .*"""
+    )
+
+    /**
+     * Laravel appends the exception to the record: a `[stacktrace]` marker, `#N file(line): call`
+     * frames, `[previous exception]` sections and the closing `"}` of the context JSON.
+     */
+    private val monologContinuation = Pattern.compile(
+        """(?:\[stacktrace\]\s*)|(?:\[previous exception\] .*)|(?:#\d+ .*)|(?:"\}\s*)|(?:\s+\S.*)"""
     )
 
     /** 10. Django / gunicorn — gunicorn bracketed records and Django runserver requests. */
@@ -130,11 +152,11 @@ object BuiltinSniffers {
         RegexSniffer("nginx / Apache access", 40, nginxAccess, timestamp = TS_ACCESS),
         RegexSniffer("nginx error", 40, nginxError, timestamp = TS_GO),
         RegexSniffer("Apache error", 40, apacheError, timestamp = TS_APACHE),
-        RegexSniffer("PHP / Laravel (Monolog)", 30, monolog, timestamp = TS_SQ),
+        RegexSniffer("PHP / Laravel (Monolog)", 30, monolog, monologContinuation, TS_MONOLOG),
         RegexSniffer("Django / gunicorn", 30, django, timestamp = varargOf(TS_SQ, TS_DJANGO)),
         RegexSniffer(".NET (Microsoft.Extensions.Logging)", 30, dotnet, dotnetContinuation, TS_ISO_TZ),
         RegexSniffer("syslog", 30, syslog, timestamp = varargOf(TS_SYSLOG, TS_ISO_MID)),
-        RegexSniffer("Plain timestamp", 10, plainTimestamp, timestamp = TS_ISO),
+        RegexSniffer("Plain timestamp", 10, plainTimestamp, logbackContinuation, TS_ISO),
     )
 
     /** Lookup by format name for the toggle/installer wiring. */

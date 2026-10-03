@@ -35,12 +35,27 @@ class LineSegmenter(private val sniffer: LogFormatSniffer?) {
 
     fun spans(line: CharSequence): List<Span> {
         val text = line.toString()
-        if (sniffer == null) return listOf(Span(LogSmithTokenTypes.GENERIC, 0, text.length))
         if (text.isEmpty()) return emptyList()
+        if (sniffer == null) {
+            // No format: the only structure left is the ANSI one (an unclaimed coloured file),
+            // so the escapes still become their own tokens and the rest stays one GENERIC span.
+            if (!AnsiText.containsEscape(text)) return listOf(Span(LogSmithTokenTypes.GENERIC, 0, text.length))
+            val stripped = AnsiText.stripWithMap(text)
+            val plain = if (stripped.text.isEmpty()) emptyList() else listOf(Span(LogSmithTokenTypes.GENERIC, 0, stripped.text.length))
+            return withEscapes(stripped, plain)
+        }
         if (!AnsiText.containsEscape(text)) return classify(text)
         val stripped = AnsiText.stripWithMap(text)
         return withEscapes(stripped, classify(stripped.text))
     }
+
+    /**
+     * The level token a record line is coloured with, or null when it carries none. [text] must be
+     * escape-free and accepted by the sniffer; the filter uses this so that what it calls an
+     * ERROR record is exactly what the highlighter paints red.
+     */
+    fun recordLevel(text: String): IElementType? =
+        recordSpans(text).firstOrNull { it.type in LEVEL_TYPES }?.type
 
     /** The spans an escape-free line earns; [text] is what the sniffer is asked to read. */
     private fun classify(text: String): List<Span> {
@@ -223,6 +238,13 @@ class LineSegmenter(private val sniffer: LogFormatSniffer?) {
         else -> LogSmithTokenTypes.LEVEL_INFO
     }
 }
+
+private val LEVEL_TYPES: Set<IElementType> = setOf(
+    LogSmithTokenTypes.LEVEL_ERROR,
+    LogSmithTokenTypes.LEVEL_WARN,
+    LogSmithTokenTypes.LEVEL_INFO,
+    LogSmithTokenTypes.LEVEL_DEBUG,
+)
 
 internal object SegmentPatterns {
 

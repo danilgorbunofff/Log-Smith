@@ -5,7 +5,8 @@ package com.danilgorbunofff.logsmith.filter
  * it lays out the contiguous runs of lines the editor should fold away.
  *
  * Semantics of facts lines ([LogLineFacts]):
- *  - a record line is visible when it matches the filter (level + optional free text);
+ *  - a record line is visible when it matches the filter (level + optional free text); a
+ *    record without a severity passes the level part;
  *  - a non-record (`0`) line follows the record it belongs to: hidden while a hidden run
  *    is open, visible as lead-in before the first record or right after a matching
  *    record — so stack frames of a *visible* record are never cut from view;
@@ -45,7 +46,9 @@ object FilterFoldPlan {
         state: FilterState,
         lineTexts: (Int) -> String?,
     ): Boolean {
-        if (!state.matchesLevel(LogLineFacts.levelOf(byte))) return false
+        // A record without a severity cannot be judged by level, so only the text filter applies.
+        val level = LogLineFacts.levelOf(byte)
+        if (level != null && !state.matchesLevel(level)) return false
         if (state.text.isBlank()) return true
         val text = lineTexts(line) ?: return true
         return text.contains(state.text, ignoreCase = true)

@@ -1,5 +1,6 @@
 package com.danilgorbunofff.logsmith
 
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -21,6 +22,8 @@ abstract class LogSmithGotoErrorAction(private val forward: Boolean) : AnAction(
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabledAndVisible = session(e) != null
     }
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 }
 
 class LogSmithGotoNextErrorAction : LogSmithGotoErrorAction(true)

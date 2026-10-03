@@ -20,6 +20,7 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
     private val explained = LongArray(ordered.size)
     private val records = LongArray(ordered.size)
     private var scanned = 0L
+    private var ansiLines = 0L
     private var capNote: String? = null
 
     fun onLine(rawLine: String) {
@@ -28,9 +29,11 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
         // console pattern emits `<ESC>[32m INFO <ESC>[0m`), and no pattern matches through
         // them, so a coloured log would be mis-claimed or reported as no format at all.
         // Detection strips here; highlighting re-reads the raw text and styles the escapes.
-        val line = if (AnsiText.containsEscape(trimmed)) AnsiText.strip(trimmed) else trimmed
+        val coloured = AnsiText.containsEscape(trimmed)
+        val line = if (coloured) AnsiText.strip(trimmed) else trimmed
         if (line.isBlank()) return
         scanned++
+        if (coloured) ansiLines++
         for (index in ordered.indices) {
             val sniffer = ordered[index]
             if (sniffer.matches(line)) {
@@ -83,7 +86,7 @@ class FormatScorer(sniffers: List<LogFormatSniffer>) {
         return if (candidate != null && candidate.ratio >= MIN_RATIO) {
             DetectionResult.Matched(candidate)
         } else {
-            DetectionResult.NoMatch(candidate, scanned.toInt(), capNote)
+            DetectionResult.NoMatch(candidate, scanned.toInt(), capNote, ansiLines.toInt())
         }
     }
 

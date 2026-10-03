@@ -3,15 +3,12 @@ package com.danilgorbunofff.logsmith.platform
 import com.danilgorbunofff.logsmith.LogSmithLineIndexService
 import com.danilgorbunofff.logsmith.index.LineOffsetIndex
 import com.intellij.openapi.util.Disposer
-import com.intellij.testFramework.LightVirtualFile
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import java.io.IOException
-import java.io.InputStream
 
 /**
- * The line index behind the status line (charter §5.3, R5): the whole file is indexed off
- * the EDT, an over-large or unreadable file is reported rather than swallowed, and nothing
+ * The line index behind the status line (charter §5.3, R5): the whole document is indexed off
+ * the EDT in document offsets, an over-large one is reported rather than swallowed, and nothing
  * is delivered after the editor is gone.
  */
 class LineIndexServiceTest : BasePlatformTestCase() {
@@ -21,9 +18,8 @@ class LineIndexServiceTest : BasePlatformTestCase() {
     private fun service() = project.getService(LogSmithLineIndexService::class.java)
 
     fun `test the whole file is indexed and reported on the EDT`() {
-        val file = myFixture.configureByText("app.log", logback).virtualFile
         var outcome: LogSmithLineIndexService.Outcome? = null
-        val job = service().index(file, testRootDisposable) { outcome = it }
+        val job = service().index(logback, testRootDisposable) { outcome = it }
         job.awaitForTests()
         assertNull("the outcome must arrive on the EDT, not on the indexing thread", outcome)
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
@@ -36,40 +32,42 @@ class LineIndexServiceTest : BasePlatformTestCase() {
     }
 
     fun `test a file over the cap is refused with its size`() {
-        val file = myFixture.configureByText("app.log", logback).virtualFile
         var outcome: LogSmithLineIndexService.Outcome? = null
         val job = service().index(
-            file,
+            logback,
             testRootDisposable,
-            maxBytes = 16,
+            maxChars = 16,
             maxLines = LineOffsetIndex.DEFAULT_MAX_LINES,
         ) { outcome = it }
         job.awaitForTests()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
         val tooLarge = outcome as LogSmithLineIndexService.Outcome.TooLarge
-        assertEquals(logback.length.toLong(), tooLarge.bytes)
+        assertEquals(logback.length.toLong(), tooLarge.length)
         assertFalse("a refused file is not an error, it is a stated limit", job.cancelled)
     }
 
-    fun `test an unreadable file is reported, never swallowed`() {
-        val broken = object : LightVirtualFile("broken.log", logback) {
-            override fun getInputStream(): InputStream = throw IOException("permission denied")
-        }
+    fun `test a CRLF file is indexed in the document's coordinates`() {
+        // The document normalizes CRLF to LF; the index must describe the document, not the
+        // bytes on disk, or the live tail mistakes every CRLF file for a rewritten one.
+        myFixture.configureByText("crlf.log", logback.replace("\n", "\r\n"))
+        val document = myFixture.editor.document
         var outcome: LogSmithLineIndexService.Outcome? = null
-        val job = service().index(broken, testRootDisposable) { outcome = it }
-        job.awaitForTests()
+        service().index(document.immutableCharSequence, testRootDisposable) { outcome = it }.awaitForTests()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
-        val failed = outcome as LogSmithLineIndexService.Outcome.Failed
-        assertEquals("permission denied", failed.reason)
+        val indexed = outcome as LogSmithLineIndexService.Outcome.Indexed
+        assertEquals(document.textLength.toLong(), indexed.index.scannedChars)
+        assertEquals(document.lineCount, indexed.index.lineCount)
+        for (line in 0 until document.lineCount) {
+            assertEquals(document.getLineStartOffset(line).toLong(), indexed.index.startOfLine(line))
+        }
     }
 
     fun `test no outcome is delivered after the editor is disposed`() {
-        val file = myFixture.configureByText("app.log", logback).virtualFile
         val parent = Disposer.newDisposable()
         var delivered = 0
-        val job = service().index(file, parent) { delivered++ }
+        val job = service().index(logback, parent) { delivered++ }
         Disposer.dispose(parent)
         job.awaitForTests()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
